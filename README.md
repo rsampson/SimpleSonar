@@ -40,8 +40,18 @@ pio run --target upload
 
 Key configuration lives at the top of
 [firmware/src/main.cpp](firmware/src/main.cpp): ping frequency/cycle count,
-ADC resolution/attenuation, and the `Serial` baud rate used to talk to the
-PC (must match `BAUD_RATE` in [pc/receive.py](pc/receive.py)).
+ADC resolution/attenuation/sample rate (`ADC_SAMPLE_FREQ_HZ`), and the
+`Serial` baud rate used to talk to the PC (must match `BAUD_RATE` in
+[pc/receive.py](pc/receive.py)).
+
+Sampling uses the ESP-IDF ADC continuous (DMA) driver rather than
+`analogRead()`, so each ping's samples are captured back-to-back at a fixed
+hardware-clocked rate (100 kHz by default) instead of software-timed,
+jittery `analogRead()` calls (~25-40 kHz). The original ESP32's ADC digital
+controller re-triggers conversions in hardware bursts and can emit short
+runs of spurious zero readings at each burst restart; `capture_samples()`
+linearly interpolates across any such run before sending, using its real
+neighboring samples.
 
 Data packets and plain-text debug/status lines share this single serial
 port. [pc/receive.py](pc/receive.py) tells them apart by peeking at the
@@ -59,7 +69,7 @@ Each ping packet sent to the PC consists of:
 | `t_ping_us` | `int64_t` | ESP32 timestamp at burst start (`esp_timer_get_time()`) |
 | `t_sample_us` | `int64_t` | ESP32 timestamp at first sample read |
 | `num_samples` | `uint16_t` | Number of samples in this packet |
-| `sample_dt_us` | `uint32_t` | Measured per-sample interval, in microseconds |
+| `sample_dt_us` | `uint32_t` | Per-sample interval, in microseconds (nominal 1e6 / ADC_SAMPLE_FREQ_HZ) |
 | payload | `num_samples` × `int16_t` | Raw sample values |
 
 ## PC
