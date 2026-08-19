@@ -1,0 +1,7 @@
+future==1.0.0
+iso8601==2.1.0
+matplotlib==3.10.1
+numpy==2.2.4
+pyserial==3.5
+PyYAML==6.0.3
+serial==0.0.97
