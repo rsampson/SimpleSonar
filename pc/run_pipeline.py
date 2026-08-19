@@ -1,8 +1,8 @@
 """Run the sonar pipeline end-to-end: record, then review.
 
-Runs receive.py to stream serial data to sensor_stream.csv (stop it with
-Ctrl+C), then plot_echogram.py, then plot_matched_filter.py, each waiting
-for the previous one to exit before starting the next.
+Runs receive.py --fresh to stream serial data into a new sensor_stream.csv
+(stop it with Ctrl+C), then plot_echogram.py, then plot_matched_filter.py,
+each waiting for the previous one to exit before starting the next.
 """
 
 import subprocess
@@ -12,17 +12,17 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 PYTHON = sys.executable
 
-STAGES = ['receive.py', 'plot_echogram.py', 'plot_matched_filter.py']
+STAGES = [('receive.py', ['--fresh']), ('plot_echogram.py', []), ('plot_matched_filter.py', [])]
 
 
-def run_stage(script):
+def run_stage(script, args):
     print(f"\n=== Running {script} (Ctrl+C or close its window to continue) ===")
     # Ctrl+C hits the whole foreground process group, so this process gets
     # the KeyboardInterrupt too, right as the child (e.g. receive.py) is
     # catching its own and exiting cleanly. That's the expected way to end
     # a stage, so swallow it here instead of letting it kill the pipeline.
     try:
-        result = subprocess.run([PYTHON, script], cwd=SCRIPT_DIR)
+        result = subprocess.run([PYTHON, script, *args], cwd=SCRIPT_DIR)
         returncode = result.returncode
     except KeyboardInterrupt:
         returncode = -2
@@ -34,8 +34,8 @@ def run_stage(script):
 
 
 def main():
-    for script in STAGES:
-        run_stage(script)
+    for script, args in STAGES:
+        run_stage(script, args)
     print("\nPipeline complete.")
 
 

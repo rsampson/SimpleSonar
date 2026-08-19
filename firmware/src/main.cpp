@@ -4,9 +4,6 @@
 #define BUFFER_SIZE 2048 // 2048 int16_t integers = 4096 bytes (4 KB)
 int16_t data_buffer[BUFFER_SIZE];
 
-// Define the custom pins you want to use for the second serial port
-#define RXD2 16
-#define TXD2 17
 // Ping output and analog input pins
 #define PING_PIN_A 25
 #define PING_PIN_B 26
@@ -20,9 +17,11 @@ int16_t data_buffer[BUFFER_SIZE];
 // deterministic rather than relying on core defaults.
 #define ADC_RESOLUTION_BITS 12
 #define ADC_ATTENUATION ADC_11db // ~0-3.3V input range
-// Serial2 baud rate to the PC. At 115200 baud, transmitting the header +
+// Serial baud rate. This single UART carries data packets, debug/status
+// text, and START/STOP commands - see send_data()/process_commands() and
+// the framing note above them. At 115200 baud, transmitting the header +
 // 4KB payload takes ~250-350ms, which dominates the ping-to-ping period.
-#define SERIAL2_BAUD 921600
+#define SERIAL_BAUD 921600
 
 // Packet header sent ahead of each data_buffer payload. Timestamps are
 // esp_timer_get_time() microseconds (monotonic since boot, not wall-clock),
@@ -42,11 +41,17 @@ bool ping_enabled = false;
 String serial_command_buffer;
 
 void send_data(const PingHeader &header) {
+    // Data packets and debug text share one Serial port. receive.py tells
+    // them apart by peeking at the first byte: 0xAA (this header's sync
+    // byte) means a binary packet follows; anything else is a plain text
+    // debug line ending in '\n'. Never call Serial.print()/println() while
+    // a packet is being written, or its bytes could land mid-packet.
+
     // 1. Send Header (includes its own sync bytes)
-    Serial2.write((const uint8_t*)&header, sizeof(header));
+    Serial.write((const uint8_t*)&header, sizeof(header));
 
     // 2. Send Payload (Cast the integer array to a byte pointer)
-    Serial2.write((uint8_t*)data_buffer, sizeof(data_buffer));
+    Serial.write((uint8_t*)data_buffer, sizeof(data_buffer));
 }
 
 void handle_serial_command(const String &command) {
@@ -62,9 +67,9 @@ void handle_serial_command(const String &command) {
     }
 }
 
-void process_serial2_commands() {
-    while (Serial2.available() > 0) {
-        char c = Serial2.read();
+void process_commands() {
+    while (Serial.available() > 0) {
+        char c = Serial.read();
         if (c == '\n' || c == '\r') {
             if (serial_command_buffer.length() > 0) {
                 handle_serial_command(serial_command_buffer);
@@ -98,9 +103,7 @@ void emit_differential_burst() {
 }
 
 void setup() {
-    Serial.begin(115200);
-     // Initialize the second serial port: Serial2.begin(baud, config, rxPin, txPin);
-     Serial2.begin(SERIAL2_BAUD, SERIAL_8N1, RXD2, TXD2);
+    Serial.begin(SERIAL_BAUD);
 
     // Configure LEDC for the differential ping pair: both pins free-run in
     // hardware at PING_FREQUENCY, with B's output inverted relative to A so
@@ -117,7 +120,7 @@ void setup() {
 }
 
 void loop() {
-    process_serial2_commands();
+    process_commands();
 
     if (!ping_enabled) {
         delay(10);

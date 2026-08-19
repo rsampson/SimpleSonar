@@ -9,8 +9,8 @@ import signal
 import time
 
 # Configuration
-SERIAL_PORT = '/dev/ttyUSB0'
-BAUD_RATE = 921600           # must match Serial2 baud rate set in firmware (SERIAL2_BAUD)
+SERIAL_PORT = '/dev/ttyUSB1'
+BAUD_RATE = 921600           # must match Serial baud rate set in firmware (SERIAL_BAUD)
 OUTPUT_FILE = 'sensor_stream.csv'
 START_COMMAND = b'START\n'
 STOP_COMMAND = b'STOP\n'
@@ -81,12 +81,29 @@ def continuous_serial_to_csv(fresh=False):
             print(f"Streaming data into {OUTPUT_FILE}. Press Ctrl+C to stop.\n")
 
             last_ping_id = None
+            debug_line = bytearray()
+
+            def flush_debug_line():
+                if debug_line:
+                    text = debug_line.decode('utf-8', errors='replace').rstrip('\r')
+                    if text:
+                        print(f"[ESP32] {text}")
+                    debug_line.clear()
 
             try:
                 while True:
-                    # 1. Align with the synchronization header [0xAA, 0xBB]
-                    if ser.read(1) == b'\xAA':
-                        if ser.read(1) == b'\xBB':
+                    # The ESP32 sends binary data packets and plain-text debug
+                    # lines on the same port. Peek one byte: 0xAA 0xBB marks the
+                    # start of a binary packet; anything else is debug text,
+                    # accumulated until '\n' and printed (not logged to CSV).
+                    b = ser.read(1)
+                    if not b:
+                        continue  # read timeout, no byte available yet
+
+                    if b == b'\xAA':
+                        second = ser.read(1)
+                        if second == b'\xBB':
+                            flush_debug_line()
 
                             # Capture the host arrival time (subject to USB/serial
                             # latency - use T_ping_us/T_sample_us from the header
@@ -130,6 +147,19 @@ def continuous_serial_to_csv(fresh=False):
 
                             print(f"[{timestamp}] Logged packet {ping_id} successfully "
                                   f"({num_samples} integers, dt={sample_dt_us} us/sample).")
+                        else:
+                            # Lone 0xAA wasn't followed by 0xBB - treat both
+                            # bytes as debug text rather than dropping them.
+                            debug_line += b
+                            if second:
+                                if second == b'\n':
+                                    flush_debug_line()
+                                else:
+                                    debug_line += second
+                    elif b == b'\n':
+                        flush_debug_line()
+                    else:
+                        debug_line += b
 
             except KeyboardInterrupt:
                 print("\nStreaming stopped by user.")

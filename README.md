@@ -8,7 +8,8 @@ visualizing ping data over air.
 - **[firmware/](firmware/)** — PlatformIO project for the ESP32. Drives a
   differential ultrasonic transducer pair, samples the reflected signal, and
   streams framed ping packets (sync bytes + header + `int16` sample payload)
-  to the PC over a second UART.
+  to the PC over the same UART used for flashing/debug output, interleaved
+  with plain-text debug lines.
 - **[pc/](pc/)** — Python tools that run on the PC:
   - [receive.py](pc/receive.py) connects over serial, parses ping packets,
     and logs them to a CSV file.
@@ -39,8 +40,15 @@ pio run --target upload
 
 Key configuration lives at the top of
 [firmware/src/main.cpp](firmware/src/main.cpp): ping frequency/cycle count,
-ADC resolution/attenuation, and the `Serial2` baud rate used to talk to the
+ADC resolution/attenuation, and the `Serial` baud rate used to talk to the
 PC (must match `BAUD_RATE` in [pc/receive.py](pc/receive.py)).
+
+Data packets and plain-text debug/status lines share this single serial
+port. [pc/receive.py](pc/receive.py) tells them apart by peeking at the
+first byte of each read: a packet's `0xAA 0xBB` sync bytes mean a binary
+packet follows, otherwise the bytes up to the next `\n` are treated as a
+debug line and printed (not written to the CSV). START/STOP commands from
+the PC to the ESP32 also travel over this same port.
 
 Each ping packet sent to the PC consists of:
 
@@ -68,8 +76,8 @@ pip install -r requirements.txt
 ### 1. Record a sensor stream
 
 Edit `SERIAL_PORT` and `BAUD_RATE` in [pc/receive.py](pc/receive.py) if
-needed (defaults: `/dev/ttyUSB0` at 921600 baud, matching the firmware's
-`Serial2` config), then run:
+needed (defaults: `/dev/ttyUSB1` at 921600 baud, matching the firmware's
+`Serial` config), then run:
 
 ```bash
 python receive.py
