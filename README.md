@@ -85,9 +85,13 @@ pip install -r requirements.txt
 
 ### 1. Record a sensor stream
 
-Edit `SERIAL_PORT` and `BAUD_RATE` in [pc/receive.py](pc/receive.py) if
-needed (defaults: `/dev/ttyUSB1` at 921600 baud, matching the firmware's
-`Serial` config), then run:
+By default [pc/receive.py](pc/receive.py) auto-detects the ESP32 by probing
+`/dev/ttyUSB0` and `/dev/ttyUSB1` (see `SERIAL_PORT_CANDIDATES`) and
+connecting to whichever one responds as the sonar - useful since the port
+it enumerates as can change depending on what else is plugged in. Set
+`SERIAL_PORT` to a specific device path to skip auto-detection and force
+that port. `BAUD_RATE` (921600 by default) must match the firmware's
+`Serial` config either way. Then run:
 
 ```bash
 python receive.py
