@@ -13,7 +13,15 @@ int16_t data_buffer[BUFFER_SIZE];
 #define ANALOG_PIN 34
 // PWM (LEDC) configuration for ESP32
 #define PING_FREQUENCY 3300      // Hz
-#define PING_CYCLES 10          // number of cycles to emit
+// The transducer is narrowband (measured Q~14, ~250 Hz -3dB bandwidth around
+// ~3500-3700 Hz), so it needs only ~Q/pi =~ 4-5 cycles to reach steady
+// amplitude, and - being narrowband - a matched filter can't meaningfully
+// compress a longer single-tone burst anyway (no bandwidth to exploit).
+// Extra cycles past that just lengthen the burst and push out the near-field
+// dead zone (echoes arriving before transmission finishes are unusable) with
+// no resolution benefit. 6 cycles keeps comfortable margin above the ~4-5
+// needed to reach full amplitude while shrinking that dead zone.
+#define PING_CYCLES 6           // number of cycles to emit
 #define PING_RESOLUTION 8       // bits (0-255)
 #define PING_DUTY 128           // duty (0 - 2^PING_RESOLUTION-1)
 // ADC configuration - set explicitly so sample rate/dynamic range are

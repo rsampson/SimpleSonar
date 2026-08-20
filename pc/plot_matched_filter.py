@@ -9,7 +9,7 @@ INPUT_FILE = 'sensor_stream.csv'
 
 # Must match the LEDC drive configuration in firmware/src/main.cpp.
 PING_FREQUENCY_HZ = 3300
-PING_CYCLES = 10
+PING_CYCLES = 6
 
 # Speed of sound in air at sea level, 75 F (23.9 C): c = 331.3 + 0.606 * T_celsius
 SPEED_OF_SOUND_M_S = 331.3 + 0.606 * 23.9
