@@ -7,9 +7,14 @@ from plot_sensor_stream import load_packets, META_COLUMNS
 
 INPUT_FILE = 'sensor_stream.csv'
 
-# Must match the LEDC drive configuration in firmware/src/main.cpp.
-PING_FREQUENCY_HZ = 3300
-PING_CYCLES = 10
+# Must match the chirp configuration in firmware/src/main.cpp
+# (PING_CHIRP_START_HZ / PING_CHIRP_END_HZ / PING_CHIRP_STEPS /
+# PING_CHIRP_CYCLES_PER_STEP).
+PING_CHIRP_START_HZ = 2640
+PING_CHIRP_END_HZ = 3960
+PING_CHIRP_STEPS = 5
+PING_CHIRP_CYCLES_PER_STEP = 4
+PING_CYCLES = PING_CHIRP_STEPS * PING_CHIRP_CYCLES_PER_STEP
 
 # Speed of sound in air at sea level, 75 F (23.9 C): c = 331.3 + 0.606 * T_celsius
 SPEED_OF_SOUND_M_S = 331.3 + 0.606 * 23.9
@@ -20,18 +25,35 @@ def make_ping_template(sample_dt_us):
     """Reconstruct the transmitted burst as sampled at the receiver's rate.
 
     The firmware drives PING_PIN_A/B as a free-running LEDC square wave
-    (~50% duty) for PING_CYCLES at PING_FREQUENCY_HZ, gated on for exactly
-    that many cycles and off otherwise. That gated square wave, not an
-    idealized sinusoid, is the actual matched-filter reference: it is what
-    left the transducer electrically before the channel and transducer
-    bandlimited it on the way back.
+    (~50% duty), stepping PING_CHIRP_STEPS discrete frequencies from
+    PING_CHIRP_START_HZ to PING_CHIRP_END_HZ and holding each for
+    PING_CHIRP_CYCLES_PER_STEP cycles (see emit_differential_burst() in
+    firmware/src/main.cpp) - a stepped chirp rather than one fixed tone, so
+    the matched filter's autocorrelation peak comes out sharper than a
+    single-tone pulse of the same length. ledcChangeFrequency() reconfigures
+    the LEDC timer for each step (not a phase-continuous glide), so each
+    step is reconstructed starting at phase 0, same as the hardware.
+    That gated, stepped square wave, not an idealized chirp sinusoid, is the
+    actual matched-filter reference: it is what left the transducer
+    electrically before the channel and transducer bandlimited it on the
+    way back.
     """
-    burst_duration_s = PING_CYCLES / PING_FREQUENCY_HZ
     dt_s = sample_dt_us * 1e-6
-    n = max(int(round(burst_duration_s / dt_s)), 1)
-    t = np.arange(n) * dt_s
-    template = np.sign(np.sin(2 * np.pi * PING_FREQUENCY_HZ * t))
-    template[template == 0] = 1.0
+    freqs = [
+        PING_CHIRP_START_HZ + (PING_CHIRP_END_HZ - PING_CHIRP_START_HZ) * step // (PING_CHIRP_STEPS - 1)
+        for step in range(PING_CHIRP_STEPS)
+    ]
+
+    step_segments = []
+    for freq in freqs:
+        step_duration_s = PING_CHIRP_CYCLES_PER_STEP / freq
+        n_step = max(int(round(step_duration_s / dt_s)), 1)
+        t = np.arange(n_step) * dt_s
+        segment = np.sign(np.sin(2 * np.pi * freq * t))
+        segment[segment == 0] = 1.0
+        step_segments.append(segment)
+
+    template = np.concatenate(step_segments)
     # Zero-mean so correlation isn't biased by the reference's DC content.
     return template - template.mean()
 
@@ -80,7 +102,8 @@ def main():
     template = make_ping_template(meta0['SampleDt_us'])
     burst_range_cm = len(template) * meta0['SampleDt_us'] * US_TO_CM
     print(f"Ping template: {len(template)} samples covering the "
-          f"{PING_CYCLES}-cycle / {PING_FREQUENCY_HZ} Hz burst "
+          f"{PING_CYCLES}-cycle chirp ({PING_CHIRP_START_HZ}-{PING_CHIRP_END_HZ} Hz, "
+          f"{PING_CHIRP_STEPS} steps) "
           f"(~{burst_range_cm:.1f} cm of range resolution loss near t=0).")
 
     line_raw, = ax_raw.plot([], [])
