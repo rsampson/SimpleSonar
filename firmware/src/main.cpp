@@ -12,21 +12,10 @@ int16_t data_buffer[BUFFER_SIZE];
 #define PING_PIN_B 26
 #define ANALOG_PIN 34
 // PWM (LEDC) configuration for ESP32
+#define PING_FREQUENCY 3300      // Hz
+#define PING_CYCLES 10          // number of cycles to emit
 #define PING_RESOLUTION 8       // bits (0-255)
 #define PING_DUTY 128           // duty (0 - 2^PING_RESOLUTION-1)
-// Linear-frequency-modulated (chirp) burst: PING_CHIRP_STEPS discrete LEDC
-// frequency steps sweeping PING_CHIRP_START_HZ -> PING_CHIRP_END_HZ, each
-// held for PING_CHIRP_CYCLES_PER_STEP cycles (LEDC has no continuous glide,
-// so the sweep is stepped rather than a true smooth ramp - keep the PC-side
-// matched-filter template in pc/plot_matched_filter.py's make_ping_template()
-// in sync with these values). A chirp spreads the transmitted energy across
-// a band instead of one tone, so the matched filter's autocorrelation peak
-// comes out narrower/sharper (better range resolution) than a fixed-tone
-// pulse of the same length.
-#define PING_CHIRP_START_HZ 2640      // Hz, ~3300 Hz center - 20%
-#define PING_CHIRP_END_HZ 3960        // Hz, ~3300 Hz center + 20%
-#define PING_CHIRP_STEPS 5
-#define PING_CHIRP_CYCLES_PER_STEP 4  // 5 steps * 4 cycles = 20 cycles total
 // ADC configuration - set explicitly so sample rate/dynamic range are
 // deterministic rather than relying on core defaults. Sampling uses the
 // ESP-IDF ADC continuous (DMA) driver rather than analogRead(): a single
@@ -272,29 +261,17 @@ void process_commands() {
 }
 
 void emit_differential_burst() {
-    // A and B free-run as hardware square waves (with B hardware-inverted
-    // relative to A), so the differential pair is generated entirely by the
-    // LEDC peripheral - no per-half-cycle software toggling needed. Step
-    // through PING_CHIRP_STEPS frequencies from PING_CHIRP_START_HZ to
-    // PING_CHIRP_END_HZ, holding each for PING_CHIRP_CYCLES_PER_STEP cycles,
-    // to sweep the transmitted burst instead of a single fixed tone.
+    // A and B free-run as hardware square waves at PING_FREQUENCY (configured
+    // in setup(), with B's output hardware-inverted relative to A), so the
+    // differential pair is generated entirely by the LEDC peripheral - no
+    // per-half-cycle software toggling needed. Un-gate both channels for
+    // exactly PING_CYCLES worth of time, then gate them back to idle.
+    const uint32_t burstUs = (1000000ULL * PING_CYCLES) / PING_FREQUENCY;
+
     ledcWrite(PING_PIN_A, PING_DUTY);
     ledcWrite(PING_PIN_B, PING_DUTY);
 
-    for (int step = 0; step < PING_CHIRP_STEPS; step++) {
-        uint32_t freq = PING_CHIRP_START_HZ +
-            ((uint32_t)(PING_CHIRP_END_HZ - PING_CHIRP_START_HZ) * step) / (PING_CHIRP_STEPS - 1);
-
-        // Both channels are on separate LEDC timers (each got its own via
-        // ledcAttach in setup()), so each needs its own reconfigure call;
-        // issuing them back-to-back keeps the pair's drift to a few
-        // microseconds, well under one cycle at these frequencies.
-        ledcChangeFrequency(PING_PIN_A, freq, PING_RESOLUTION);
-        ledcChangeFrequency(PING_PIN_B, freq, PING_RESOLUTION);
-
-        const uint32_t stepUs = (1000000ULL * PING_CHIRP_CYCLES_PER_STEP) / freq;
-        delayMicroseconds(stepUs);
-    }
+    delayMicroseconds(burstUs);
 
     // End with both outputs quiet.
     ledcWrite(PING_PIN_A, 0);
@@ -305,11 +282,10 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
 
     // Configure LEDC for the differential ping pair: both pins free-run in
-    // hardware (frequency stepped per-burst in emit_differential_burst()),
-    // with B's output inverted relative to A so the pair is always
-    // electrically complementary while attached.
-    ledcAttach(PING_PIN_A, PING_CHIRP_START_HZ, PING_RESOLUTION);
-    ledcAttach(PING_PIN_B, PING_CHIRP_START_HZ, PING_RESOLUTION);
+    // hardware at PING_FREQUENCY, with B's output inverted relative to A so
+    // the pair is always electrically complementary while attached.
+    ledcAttach(PING_PIN_A, PING_FREQUENCY, PING_RESOLUTION);
+    ledcAttach(PING_PIN_B, PING_FREQUENCY, PING_RESOLUTION);
     ledcOutputInvert(PING_PIN_B, true);
 
     ledcWrite(PING_PIN_A, 0);
