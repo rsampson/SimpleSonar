@@ -1,4 +1,4 @@
-# SAS Sonar
+# Simple Sonar
 
 An ESP32-based sonar front end and PC-side tooling for capturing and
 visualizing ping data over air.
