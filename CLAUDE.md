@@ -33,10 +33,13 @@ python receive.py              # record a stream to sensor_stream.csv (Ctrl+C to
 python plot_sensor_stream.py   # raw per-packet waveform, ←/→ to navigate packets
 python plot_matched_filter.py  # raw + matched-filter view, ←/→ to navigate
 python plot_echogram.py        # full-recording waterfall echogram
-python run_pipeline.py         # runs the three stages above in sequence
+python plot_echogram_live.py   # live-scrolling echogram - run alongside receive.py in a second terminal
+python run_pipeline.py         # runs receive.py, plot_echogram.py, plot_matched_filter.py in sequence
+
+pytest                         # run the pc/tests/ suite (also runnable as `pytest pc/` from repo root)
 ```
 
-All plotting scripts read `sensor_stream.csv` from the current directory. There is no test suite for either half (firmware/test/ is an untouched PlatformIO scaffold).
+All plotting scripts read `sensor_stream.csv` from the current directory. `pc/` has a pytest suite (`pc/tests/`, config in `pc/pyproject.toml`) covering packet framing/parsing (`receive.py`'s `parse_next_event`), `BufferedReader`, CSV loading, the live-tailing logic in `plot_echogram_live.py`, and the matched-filter/envelope math — it does not cover the hardware-facing serial handshake (`_probe_port`/`find_sonar_port`) or matplotlib rendering, which need real hardware/manual verification. `firmware/test/` is an untouched PlatformIO scaffold.
 
 ## Architecture
 
@@ -73,6 +76,7 @@ Key tunables live at the top of `main.cpp`: `PING_FREQUENCY`, `PING_CYCLES`, ADC
 
 - Auto-detects the sonar's port by probing `SERIAL_PORT_CANDIDATES` (`/dev/ttyUSB0`, `/dev/ttyUSB1`) and checking which one responds correctly to a START command; set `SERIAL_PORT` to a literal path to skip this. Set to `None` by default because the enumerated port has been observed to change.
 - Uses a `BufferedReader` wrapper around the serial port rather than one-byte-at-a-time reads — at 921600 baud, syscall-per-byte reading can't keep up and risks silent kernel receive-buffer overflow/desync.
+- The packet-framing/resync state machine lives in `parse_next_event()`, a standalone function (takes a `BufferedReader`-like reader + a small state dict, returns a `ParseResult` describing what happened) kept separate from the serial/CSV I/O in `continuous_serial_to_csv()` specifically so it's unit-testable without a real serial port — see `pc/tests/test_receive_parse.py`.
 - If packet framing desyncs (e.g. from a STOP/START race where an in-flight ping still transmits after STOP), the read loop resyncs on the next `0xAA 0xBB` sync bytes and logs a `ping_id` gap warning rather than writing corrupted rows.
 
 ### PC plotting scripts
@@ -80,6 +84,7 @@ Key tunables live at the top of `main.cpp`: `PING_FREQUENCY`, `PING_CYCLES`, ADC
 - `plot_sensor_stream.py` — raw waveform per packet; x-axis converted from sample index to one-way range in cm using `SampleDt_us` and `SPEED_OF_SOUND_M_S`.
 - `plot_matched_filter.py` — `make_ping_template()` reconstructs the *actual* transmitted burst shape (not an idealized sinusoid) and cross-correlates it against the raw signal to compress each echo into a sharp peak.
 - `plot_echogram.py` — applies the matched filter across the whole recording and renders amplitude envelope (Hilbert transform) as a range-vs-time waterfall in dB (`DYNAMIC_RANGE_DB`), blanking the near-range region still ringing from the transmit burst.
+- `plot_echogram_live.py` — same matched-filter/envelope waterfall as `plot_echogram.py`, but tails `sensor_stream.csv` as `receive.py` writes it and shows a live-scrolling fixed-width window (`WINDOW_PINGS`) instead of the whole finished recording. Run as a second process alongside `receive.py`; never touches the serial port.
 - `run_pipeline.py` — chains `receive.py` → `plot_echogram.py` → `plot_matched_filter.py`, each stage starting once the previous exits.
 
 ## Working notes

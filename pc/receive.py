@@ -7,6 +7,7 @@ import os
 import datetime
 import signal
 import time
+from typing import NamedTuple, Optional
 
 # Configuration
 # SERIAL_PORT: set to a specific device path (e.g. '/dev/ttyUSB0') to force
@@ -88,6 +89,116 @@ class BufferedReader:
         b = bytes(self._buf[:1])
         del self._buf[:1]
         return b
+
+
+class ParseResult(NamedTuple):
+    kind: str  # 'packet' | 'debug_line' | 'warning' | 'idle'
+    packet: Optional[dict] = None
+    text: Optional[str] = None
+    preceding_debug_line: Optional[str] = None
+    timestamp: Optional[str] = None
+
+
+def new_parse_state():
+    return {'last_ping_id': None, 'debug_line': bytearray()}
+
+
+def _pop_debug_line(state):
+    """Drain state['debug_line'], returning decoded text or None if empty."""
+    if not state['debug_line']:
+        return None
+    text = bytes(state['debug_line']).decode('utf-8', errors='replace').rstrip('\r')
+    state['debug_line'].clear()
+    return text if text else None
+
+
+def parse_next_event(reader, state, now=datetime.datetime.now):
+    """Consume bytes from `reader` (anything with .read_byte()/.read_exact(n),
+    e.g. BufferedReader) to advance the packet-framing state machine by one
+    step, and return a ParseResult. Mutates `state` in place. Performs no
+    I/O of its own (no print(), no CSV writes) - the caller acts on the
+    result. One call == one iteration of the read loop, so the mapping to
+    the original inline loop body stays mechanical.
+
+    The ESP32 sends binary data packets and plain-text debug lines on the
+    same port. Peek one byte: 0xAA 0xBB marks the start of a binary packet;
+    anything else is debug text, accumulated until '\\n'.
+    """
+    b = reader.read_byte()
+    if not b:
+        return ParseResult(kind='idle')  # read timeout, no byte available yet
+
+    if b == b'\xAA':
+        second = reader.read_byte()
+        if second == b'\xBB':
+            # Capture the host arrival time (subject to USB/serial latency -
+            # use t_ping_us/t_sample_us from the header for the ESP32's own
+            # timing instead). Captured here, before the header/payload reads
+            # below (which can block up to the serial timeout), so a dropped
+            # packet's warning timestamp reflects when the packet started
+            # arriving, not when parsing gave up on it.
+            debug_text = _pop_debug_line(state)
+            timestamp = now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+            raw_header = reader.read_exact(HEADER_SIZE)
+            if len(raw_header) < HEADER_SIZE:
+                return ParseResult(kind='warning', text='Header truncated. Dropping packet.',
+                                    preceding_debug_line=debug_text, timestamp=timestamp)
+
+            ping_id, t_ping_us, t_sample_us, num_samples, sample_dt_us = \
+                struct.unpack(HEADER_FORMAT, raw_header)
+
+            if num_samples != NUM_SAMPLES:
+                # KNOWN QUIRK (preserved as-is, not fixed here): the actual
+                # payload the firmware sent for this packet is num_samples*2
+                # bytes, but we never read/discard it - we just abandon
+                # parsing. Those bytes stay in the reader's buffer and get
+                # reinterpreted as the start of the next sync-byte search.
+                return ParseResult(
+                    kind='warning',
+                    text=f'unexpected num_samples={num_samples}, expected {NUM_SAMPLES}. Dropping packet.',
+                    preceding_debug_line=debug_text, timestamp=timestamp)
+
+            payload_bytes = num_samples * 2
+            raw_data = reader.read_exact(payload_bytes)
+            if len(raw_data) < payload_bytes:
+                return ParseResult(kind='warning', text='Data truncated. Dropping packet.',
+                                    preceding_debug_line=debug_text, timestamp=timestamp)
+
+            integers = struct.unpack(f'<{num_samples}h', raw_data)
+
+            ping_id_gap = None
+            if state['last_ping_id'] is not None and ping_id != state['last_ping_id'] + 1:
+                ping_id_gap = (state['last_ping_id'], ping_id)
+            state['last_ping_id'] = ping_id
+
+            return ParseResult(kind='packet', packet={
+                'ping_id': ping_id,
+                't_ping_us': t_ping_us,
+                't_sample_us': t_sample_us,
+                'num_samples': num_samples,
+                'sample_dt_us': sample_dt_us,
+                'values': integers,
+                'ping_id_gap': ping_id_gap,
+            }, preceding_debug_line=debug_text, timestamp=timestamp)
+        else:
+            # Lone 0xAA wasn't followed by 0xBB - treat both bytes as debug
+            # text rather than dropping them.
+            state['debug_line'] += b
+            if second:
+                if second == b'\n':
+                    return ParseResult(kind='debug_line', text=_pop_debug_line(state))
+                else:
+                    state['debug_line'] += second
+            return ParseResult(kind='idle')
+    elif b == b'\n':
+        text = _pop_debug_line(state)
+        if text is None:
+            return ParseResult(kind='idle')
+        return ParseResult(kind='debug_line', text=text)
+    else:
+        state['debug_line'] += b
+        return ParseResult(kind='idle')
 
 
 def _drain_until_quiet(ser, quiet_s=0.3, max_wait_s=2.0):
@@ -268,87 +379,38 @@ def continuous_serial_to_csv(fresh=False):
             print(f"Sent start command to ESP32: {START_COMMAND.decode().strip()}")
             print(f"Streaming data into {OUTPUT_FILE}. Press Ctrl+C to stop.\n")
 
-            last_ping_id = None
-            debug_line = bytearray()
             reader = BufferedReader(ser)
-
-            def flush_debug_line():
-                if debug_line:
-                    text = debug_line.decode('utf-8', errors='replace').rstrip('\r')
-                    if text:
-                        print(f"[ESP32] {text}")
-                    debug_line.clear()
+            parse_state = new_parse_state()
 
             try:
                 while True:
-                    # The ESP32 sends binary data packets and plain-text debug
-                    # lines on the same port. Peek one byte: 0xAA 0xBB marks the
-                    # start of a binary packet; anything else is debug text,
-                    # accumulated until '\n' and printed (not logged to CSV).
-                    b = reader.read_byte()
-                    if not b:
-                        continue  # read timeout, no byte available yet
+                    result = parse_next_event(reader, parse_state)
 
-                    if b == b'\xAA':
-                        second = reader.read_byte()
-                        if second == b'\xBB':
-                            flush_debug_line()
+                    if result.preceding_debug_line is not None:
+                        print(f"[ESP32] {result.preceding_debug_line}")
 
-                            # Capture the host arrival time (subject to USB/serial
-                            # latency - use T_ping_us/T_sample_us from the header
-                            # for the ESP32's own timing instead).
-                            timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                    if result.kind == 'idle':
+                        continue
 
-                            # 2. Read the rest of the header (sync bytes already consumed)
-                            raw_header = reader.read_exact(HEADER_SIZE)
-                            if len(raw_header) < HEADER_SIZE:
-                                print(f"[{timestamp}] Warning: Header truncated. Dropping packet.")
-                                continue
+                    elif result.kind == 'debug_line':
+                        print(f"[ESP32] {result.text}")
 
-                            ping_id, t_ping_us, t_sample_us, num_samples, sample_dt_us = \
-                                struct.unpack(HEADER_FORMAT, raw_header)
+                    elif result.kind == 'warning':
+                        print(f"[{result.timestamp}] Warning: {result.text}")
 
-                            if num_samples != NUM_SAMPLES:
-                                print(f"[{timestamp}] Warning: unexpected num_samples={num_samples}, "
-                                      f"expected {NUM_SAMPLES}. Dropping packet.")
-                                continue
+                    elif result.kind == 'packet':
+                        p = result.packet
+                        if p['ping_id_gap'] is not None:
+                            last_id, this_id = p['ping_id_gap']
+                            print(f"[{result.timestamp}] Warning: ping_id gap "
+                                  f"({last_id} -> {this_id}), {this_id - last_id - 1} packet(s) missed.")
 
-                            # 3. Read the payload
-                            payload_bytes = num_samples * 2
-                            raw_data = reader.read_exact(payload_bytes)
-                            if len(raw_data) < payload_bytes:
-                                print(f"[{timestamp}] Warning: Data truncated. Dropping packet.")
-                                continue
+                        row_data = [result.timestamp, p['ping_id'], p['t_ping_us'], p['t_sample_us'],
+                                    p['num_samples'], p['sample_dt_us']] + list(p['values'])
+                        writer.writerow(row_data)
 
-                            # 4. Unpack binary bytes to a tuple of integers
-                            integers = struct.unpack(f'<{num_samples}h', raw_data)
-
-                            # 5. Detect drops/reordering via ping_id
-                            if last_ping_id is not None and ping_id != last_ping_id + 1:
-                                print(f"[{timestamp}] Warning: ping_id gap "
-                                      f"({last_ping_id} -> {ping_id}), {ping_id - last_ping_id - 1} packet(s) missed.")
-                            last_ping_id = ping_id
-
-                            # 6. Prepend timestamp/header fields and write row
-                            row_data = [timestamp, ping_id, t_ping_us, t_sample_us, num_samples, sample_dt_us] + \
-                                       list(integers)
-                            writer.writerow(row_data)
-
-                            print(f"[{timestamp}] Logged packet {ping_id} successfully "
-                                  f"({num_samples} integers, dt={sample_dt_us} us/sample).")
-                        else:
-                            # Lone 0xAA wasn't followed by 0xBB - treat both
-                            # bytes as debug text rather than dropping them.
-                            debug_line += b
-                            if second:
-                                if second == b'\n':
-                                    flush_debug_line()
-                                else:
-                                    debug_line += second
-                    elif b == b'\n':
-                        flush_debug_line()
-                    else:
-                        debug_line += b
+                        print(f"[{result.timestamp}] Logged packet {p['ping_id']} successfully "
+                              f"({p['num_samples']} integers, dt={p['sample_dt_us']} us/sample).")
 
             except KeyboardInterrupt:
                 print("\nStreaming stopped by user.")
