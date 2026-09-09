@@ -1,8 +1,11 @@
+#!/usr/bin/env python3
+import argparse
 import csv
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 
+import deconvolve
 from plot_sensor_stream import META_COLUMNS
 from plot_matched_filter import make_ping_template, matched_filter, US_TO_CM
 from plot_echogram import hilbert_envelope
@@ -44,6 +47,7 @@ def reset_echogram_state(state):
         'sample_dt_us': None,
         'range_cm': None,
         'template': None,
+        'impulse_response': None,
         'blank_samples': None,
         'blank_cm': None,
         'columns': [],
@@ -126,13 +130,20 @@ def process_new_packets(new_packets, live_state):
             live_state['range_cm'] = np.arange(n_samples) * sample_dt_us * US_TO_CM
             template = make_ping_template(sample_dt_us)
             live_state['template'] = template
+            live_state['impulse_response'] = deconvolve.make_impulse_response(sample_dt_us)
             blank_cm = len(template) * sample_dt_us * US_TO_CM
             live_state['blank_cm'] = blank_cm
             live_state['blank_samples'] = int(np.ceil(blank_cm / (sample_dt_us * US_TO_CM))) if sample_dt_us > 0 else 0
 
         tmpl = make_ping_template(meta['SampleDt_us'])
-        mf = matched_filter(values, tmpl)
-        env = hilbert_envelope(mf)
+        if deconvolve.DECONV_ENABLED:
+            resp = deconvolve.deconvolved_response(values, meta['SampleDt_us'],
+                                                   template=live_state['template'],
+                                                   h=live_state['impulse_response'],
+                                                   domain=deconvolve.DECONV_DOMAIN)
+        else:
+            resp = matched_filter(values, tmpl)
+        env = hilbert_envelope(resp)
         env[:live_state['blank_samples']] = np.nan
 
         live_state['columns'].append(env)
@@ -202,6 +213,17 @@ def redraw(fig, ax, mesh, live_state):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--deconv', dest='deconv', action='store_true',
+                        help="Wiener-deconvolve the array ringdown out of each trace")
+    parser.add_argument('--no-deconv', dest='deconv', action='store_false')
+    parser.add_argument('--deconv-domain', choices=('mf', 'raw'),
+                        default=deconvolve.DECONV_DOMAIN)
+    parser.set_defaults(deconv=deconvolve.DECONV_ENABLED)
+    args = parser.parse_args()
+    deconvolve.DECONV_ENABLED = args.deconv
+    deconvolve.DECONV_DOMAIN = args.deconv_domain
+
     print(f"Waiting for {INPUT_FILE}... (start receive.py in another terminal)")
     live_state = new_live_state()
     fig = ax = mesh = None

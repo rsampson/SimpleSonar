@@ -1,3 +1,4 @@
+import argparse
 import csv
 import sys
 import numpy as np
@@ -8,7 +9,7 @@ from plot_sensor_stream import load_packets, META_COLUMNS
 INPUT_FILE = 'sensor_stream.csv'
 
 # Must match the LEDC drive configuration in firmware/src/main.cpp.
-PING_FREQUENCY_HZ = 3300
+PING_FREQUENCY_HZ = 2750
 PING_CYCLES = 6
 
 # Speed of sound in air at sea level, 75 F (23.9 C): c = 331.3 + 0.606 * T_celsius
@@ -67,6 +68,16 @@ def load_first_sample_dt(path):
 
 
 def main():
+    import deconvolve  # deferred: deconvolve imports from this module
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--deconv-domain', choices=('mf', 'raw'),
+                        default=deconvolve.DECONV_DOMAIN,
+                        help="what the Wiener deconvolution panel operates on "
+                             "('mf' = matched-filter output, 'raw' = raw trace)")
+    args = parser.parse_args()
+    deconvolve.DECONV_DOMAIN = args.deconv_domain
+
     packets = load_packets(INPUT_FILE)
     if not packets:
         print(f"No packets found in {INPUT_FILE}.")
@@ -74,7 +85,7 @@ def main():
 
     state = {'idx': 0}
 
-    fig, (ax_raw, ax_mf) = plt.subplots(2, 1, figsize=(10, 8), sharex=False)
+    fig, (ax_raw, ax_mf, ax_dec) = plt.subplots(3, 1, figsize=(10, 11), sharex=False)
 
     meta0, values0 = packets[0]
     template = make_ping_template(meta0['SampleDt_us'])
@@ -88,9 +99,16 @@ def main():
     ax_raw.set_title("Raw received signal")
 
     line_mf, = ax_mf.plot([], [])
-    ax_mf.set_xlabel("Range (cm)")
     ax_mf.set_ylabel("Matched-filter response")
     ax_mf.set_title("Cross-correlation with transmitted ping (pulse compression)")
+
+    line_dec, = ax_dec.plot([], [])
+    ax_dec.set_xlabel("Range (cm)")
+    ax_dec.set_ylabel("Wiener-deconvolved")
+    ax_dec.set_title(
+        f"Ringdown deconvolution ({deconvolve.DECONV_DOMAIN}): "
+        f"f0={deconvolve.RINGDOWN_FREQUENCY_HZ:.0f} Hz, "
+        f"Q={deconvolve.RINGDOWN_Q:.0f}, lambda={deconvolve.WIENER_LAMBDA:g}")
 
     def render():
         idx = state['idx']
@@ -111,6 +129,14 @@ def main():
         ax_mf.set_xlim(0, range_cm[-1])
         ax_mf.relim()
         ax_mf.autoscale_view(scalex=False, scaley=True)
+
+        dec = deconvolve.deconvolved_response(values, sample_dt_us, template=tmpl,
+                                              domain=deconvolve.DECONV_DOMAIN)
+        dec[:len(tmpl)] = np.nan  # same near-range blank as the echogram
+        line_dec.set_data(range_cm, dec)
+        ax_dec.set_xlim(0, range_cm[-1])
+        ax_dec.relim()
+        ax_dec.autoscale_view(scalex=False, scaley=True)
 
         title = f"Packet {idx + 1} / {len(packets)} — {meta['Timestamp']}   ping_id={meta['PingID']}"
         if idx > 0:

@@ -1,7 +1,9 @@
+import argparse
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
+import deconvolve
 from plot_sensor_stream import load_packets
 from plot_matched_filter import make_ping_template, matched_filter, US_TO_CM
 
@@ -61,8 +63,13 @@ def build_echogram(packets):
     ping_times = []
     for meta, values in packets:
         tmpl = make_ping_template(meta['SampleDt_us'])
-        mf = matched_filter(values, tmpl)
-        env = hilbert_envelope(mf)
+        if deconvolve.DECONV_ENABLED:
+            resp = deconvolve.deconvolved_response(values, meta['SampleDt_us'],
+                                                   template=tmpl,
+                                                   domain=deconvolve.DECONV_DOMAIN)
+        else:
+            resp = matched_filter(values, tmpl)
+        env = hilbert_envelope(resp)
         env[:blank_samples] = np.nan
         columns.append(env)
         ping_times.append(meta['T_ping_us'] / 1e6)  # seconds, ESP32 boot-relative
@@ -81,6 +88,17 @@ def to_db(image):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--deconv', dest='deconv', action='store_true',
+                        help="Wiener-deconvolve the array ringdown out of each trace")
+    parser.add_argument('--no-deconv', dest='deconv', action='store_false')
+    parser.add_argument('--deconv-domain', choices=('mf', 'raw'),
+                        default=deconvolve.DECONV_DOMAIN)
+    parser.set_defaults(deconv=deconvolve.DECONV_ENABLED)
+    args = parser.parse_args()
+    deconvolve.DECONV_ENABLED = args.deconv
+    deconvolve.DECONV_DOMAIN = args.deconv_domain
+
     packets = load_packets(INPUT_FILE)
     if not packets:
         print(f"No packets found in {INPUT_FILE}.")
@@ -89,8 +107,13 @@ def main():
     image, range_cm, ping_times_s, blank_cm = build_echogram(packets)
     db, peak = to_db(image)
 
+    deconv_note = ""
+    if deconvolve.DECONV_ENABLED:
+        deconv_note = (f" (Wiener deconvolution ON, domain={deconvolve.DECONV_DOMAIN}, "
+                       f"f0={deconvolve.RINGDOWN_FREQUENCY_HZ:.0f} Hz "
+                       f"Q={deconvolve.RINGDOWN_Q:.0f} lambda={deconvolve.WIENER_LAMBDA:g})")
     print(f"Loaded {len(packets)} pings. Blanking first {blank_cm:.1f} cm "
-          f"(transmit burst ringdown). Peak matched-filter envelope: {peak:.1f}")
+          f"(transmit burst ringdown). Peak envelope: {peak:.1f}{deconv_note}")
 
     t_rel = ping_times_s - ping_times_s[0]
 
