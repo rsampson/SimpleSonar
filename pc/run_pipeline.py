@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Run the sonar pipeline end-to-end: record, then review.
 
 Runs receive.py --fresh to stream serial data into a new sensor_stream.csv

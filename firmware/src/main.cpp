@@ -7,23 +7,36 @@
 #define BUFFER_SIZE 2048 // 2048 int16_t integers = 4096 bytes (4 KB)
 int16_t data_buffer[BUFFER_SIZE];
 
-// Ping output and analog input pins
+// Ping output (speaker, single-ended) and analog input (microphone) pins.
+// The speaker and microphone are now two physically separate transducers
+// (an 8-ohm voice-coil speaker driven by an outboard 2W amplifier, and a
+// separate electret microphone) rather than one differential-drive element
+// doing both jobs - PING_PIN_B and the differential drive it implied are
+// retired along with the old transducer.
 #define PING_PIN_A 25
-#define PING_PIN_B 26
 #define ANALOG_PIN 34
 // PWM (LEDC) configuration for ESP32
-#define PING_FREQUENCY 3300      // Hz
-// The transducer is narrowband (measured Q~14, ~250 Hz -3dB bandwidth around
-// ~3500-3700 Hz), so it needs only ~Q/pi =~ 4-5 cycles to reach steady
-// amplitude, and - being narrowband - a matched filter can't meaningfully
-// compress a longer single-tone burst anyway (no bandwidth to exploit).
-// Extra cycles past that just lengthen the burst and push out the near-field
-// dead zone (echoes arriving before transmission finishes are unusable) with
-// no resolution benefit. 6 cycles keeps comfortable margin above the ~4-5
-// needed to reach full amplitude while shrinking that dead zone.
-#define PING_CYCLES 6           // number of cycles to emit
+// Linear-frequency-modulated (chirp) burst: PING_CHIRP_STEPS discrete LEDC
+// frequency steps sweeping PING_CHIRP_START_HZ -> PING_CHIRP_END_HZ, each
+// held for PING_CHIRP_CYCLES_PER_STEP cycles (LEDC has no continuous glide,
+// so the sweep is stepped rather than a true smooth ramp - keep the PC-side
+// matched-filter template in pc/plot_matched_filter.py's make_ping_template()
+// in sync with these values). The speaker measured resonance is ~4100 Hz;
+// +/-20% gives a band wide enough to be worth a matched filter's
+// autocorrelation compression on what's expected to be a much lower-Q,
+// more wideband element than the differential array it replaces.
+#define PING_CHIRP_START_HZ 3280      // Hz, ~4100 Hz center - 20%
+#define PING_CHIRP_END_HZ 4920        // Hz, ~4100 Hz center + 20%
+#define PING_CHIRP_STEPS 5
+#define PING_CHIRP_CYCLES_PER_STEP 4  // 5 steps * 4 cycles = 20 cycles total
 #define PING_RESOLUTION 8       // bits (0-255)
 #define PING_DUTY 128           // duty (0 - 2^PING_RESOLUTION-1)
+// Brief opposite-polarity pulse driven on PING_PIN_A immediately after the
+// burst, before parking the pin low, to electrically brake the speaker's
+// coil (the single-ended analog of the old differential design's A-to-B
+// short). Duration is a placeholder - TBD, needs bench verification (e.g.
+// scope on the speaker terminals) once hardware is in hand.
+#define BRAKE_PULSE_US 200 // TODO: unverified, tune on the bench
 // ADC configuration - set explicitly so sample rate/dynamic range are
 // deterministic rather than relying on core defaults. Sampling uses the
 // ESP-IDF ADC continuous (DMA) driver rather than analogRead(): a single
@@ -268,36 +281,60 @@ void process_commands() {
     }
 }
 
-void emit_differential_burst() {
-    // A and B free-run as hardware square waves at PING_FREQUENCY (configured
-    // in setup(), with B's output hardware-inverted relative to A), so the
-    // differential pair is generated entirely by the LEDC peripheral - no
-    // per-half-cycle software toggling needed. Un-gate both channels for
-    // exactly PING_CYCLES worth of time, then gate them back to idle.
-    const uint32_t burstUs = (1000000ULL * PING_CYCLES) / PING_FREQUENCY;
+// Attach the ping pin to an LEDC channel at the chirp's starting frequency.
+// Only attached for the duration of a burst - see emit_ping_burst(), which
+// detaches and parks the pin low (after a brief braking pulse) afterwards.
+static void attach_ping_ledc() {
+    ledcAttach(PING_PIN_A, PING_CHIRP_START_HZ, PING_RESOLUTION);
+    ledcWrite(PING_PIN_A, 0);
+}
+
+// Detach the ping pin from LEDC and actively hold it low as plain GPIO.
+static void park_ping_pin_low() {
+    ledcDetach(PING_PIN_A);
+    pinMode(PING_PIN_A, OUTPUT);
+    digitalWrite(PING_PIN_A, LOW);
+}
+
+void emit_ping_burst() {
+    // The speaker is driven single-ended from PING_PIN_A alone (no
+    // complementary second terminal, unlike the retired differential
+    // array), stepping PING_CHIRP_STEPS frequencies from
+    // PING_CHIRP_START_HZ to PING_CHIRP_END_HZ, each held for
+    // PING_CHIRP_CYCLES_PER_STEP cycles, to sweep the transmitted burst
+    // instead of emitting a single fixed tone.
+    attach_ping_ledc();
 
     ledcWrite(PING_PIN_A, PING_DUTY);
-    ledcWrite(PING_PIN_B, PING_DUTY);
 
-    delayMicroseconds(burstUs);
+    for (int step = 0; step < PING_CHIRP_STEPS; step++) {
+        uint32_t freq = PING_CHIRP_START_HZ +
+            ((uint32_t)(PING_CHIRP_END_HZ - PING_CHIRP_START_HZ) * step) / (PING_CHIRP_STEPS - 1);
 
-    // End with both outputs quiet.
-    ledcWrite(PING_PIN_A, 0);
-    ledcWrite(PING_PIN_B, 0);
+        ledcChangeFrequency(PING_PIN_A, freq, PING_RESOLUTION);
+
+        const uint32_t stepUs = (1000000ULL * PING_CHIRP_CYCLES_PER_STEP) / freq;
+        delayMicroseconds(stepUs);
+    }
+
+    // Brake the speaker coil with a brief opposite-polarity pulse before
+    // parking the pin low - the single-ended analog of the old differential
+    // design's A-to-B short, which isn't available with only one driven
+    // terminal. Duration is unverified; see BRAKE_PULSE_US above.
+    ledcDetach(PING_PIN_A);
+    pinMode(PING_PIN_A, OUTPUT);
+    digitalWrite(PING_PIN_A, HIGH);
+    delayMicroseconds(BRAKE_PULSE_US);
+    digitalWrite(PING_PIN_A, LOW);
 }
 
 void setup() {
     Serial.begin(SERIAL_BAUD);
 
-    // Configure LEDC for the differential ping pair: both pins free-run in
-    // hardware at PING_FREQUENCY, with B's output inverted relative to A so
-    // the pair is always electrically complementary while attached.
-    ledcAttach(PING_PIN_A, PING_FREQUENCY, PING_RESOLUTION);
-    ledcAttach(PING_PIN_B, PING_FREQUENCY, PING_RESOLUTION);
-    ledcOutputInvert(PING_PIN_B, true);
-
-    ledcWrite(PING_PIN_A, 0);
-    ledcWrite(PING_PIN_B, 0);
+    // Park the ping pin low at idle. emit_ping_burst() attaches the LEDC
+    // channel only for the duration of each burst and returns the pin to
+    // this actively-driven-low state afterwards.
+    park_ping_pin_low();
 
     init_adc_continuous();
 }
@@ -310,10 +347,11 @@ void loop() {
         return;
     }
 
-    // Microseconds to wait after burst before sampling. If the transducer
-    // has appreciable Q, mechanical ringdown after the drive signal stops
-    // can last hundreds of us to a few ms and will show up as a spurious
-    // near-range echo unless this is long enough - verify on a scope.
+    // Microseconds to wait after burst before sampling. The speaker and
+    // microphone are now separate transducers, so this is no longer about
+    // waiting out the emitting element's own mechanical ringdown - it's
+    // giving the front-end amplifier time to settle before sampling.
+    // Placeholder value pending bench verification - verify on a scope.
     const unsigned int AFTER_DELAY_US = 1000;
 
     PingHeader header;
@@ -323,7 +361,7 @@ void loop() {
     header.num_samples = BUFFER_SIZE;
 
     header.t_ping_us = esp_timer_get_time();
-    emit_differential_burst();
+    emit_ping_burst();
     delayMicroseconds(AFTER_DELAY_US);
 
     header.t_sample_us = esp_timer_get_time();

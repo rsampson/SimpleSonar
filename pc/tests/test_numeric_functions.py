@@ -7,13 +7,20 @@ from deconvolve import (
     wiener_deconvolve,
 )
 from plot_echogram import hilbert_envelope, to_db
-from plot_matched_filter import PING_CYCLES, PING_FREQUENCY_HZ, make_ping_template, matched_filter
+from plot_matched_filter import (
+    PING_CHIRP_CYCLES_PER_STEP,
+    PING_CHIRP_END_HZ,
+    PING_CHIRP_START_HZ,
+    PING_CHIRP_STEPS,
+    make_ping_template,
+    matched_filter,
+)
 
 
 def test_matched_filter_peak_at_expected_lag():
     template = make_ping_template(sample_dt_us=10)
     rng = np.random.default_rng(seed=0)
-    values = rng.normal(scale=0.01, size=400)
+    values = rng.normal(scale=0.01, size=len(template) + 100)
     k = 50
     values[k:k + len(template)] += template
 
@@ -83,9 +90,15 @@ def test_make_ping_template_length_and_zero_mean():
     sample_dt_us = 10
     template = make_ping_template(sample_dt_us)
 
-    burst_duration_s = PING_CYCLES / PING_FREQUENCY_HZ
     dt_s = sample_dt_us * 1e-6
-    expected_n = max(int(round(burst_duration_s / dt_s)), 1)
+    freqs = [
+        PING_CHIRP_START_HZ + (PING_CHIRP_END_HZ - PING_CHIRP_START_HZ) * step // (PING_CHIRP_STEPS - 1)
+        for step in range(PING_CHIRP_STEPS)
+    ]
+    expected_n = sum(
+        max(int(round((PING_CHIRP_CYCLES_PER_STEP / freq) / dt_s)), 1)
+        for freq in freqs
+    )
 
     assert len(template) == expected_n
     assert np.isclose(template.mean(), 0.0, atol=1e-9)
@@ -97,7 +110,9 @@ def test_make_ping_template_minimum_length_floor():
 
     template = make_ping_template(huge_sample_dt_us)
 
-    assert len(template) == 1
+    # Each step independently floors to at least 1 sample and they're
+    # concatenated, so the whole-template floor is one sample per step.
+    assert len(template) == PING_CHIRP_STEPS
 
 
 # --- Wiener ringdown deconvolution -------------------------------------------

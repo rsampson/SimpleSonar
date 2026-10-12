@@ -1,6 +1,7 @@
+import numpy as np
 import pytest
 
-from plot_sensor_stream import load_packets
+from plot_sensor_stream import US_TO_CM, load_packets, range_axis_cm
 
 
 def test_load_packets_valid_file(tmp_path):
@@ -49,3 +50,14 @@ def test_load_packets_header_only_returns_empty_list(tmp_path):
     packets = load_packets(str(csv_path))
 
     assert packets == []
+
+
+def test_range_axis_cm_starts_at_capture_offset():
+    meta = {'T_ping_us': 1000, 'T_sample_us': 9200, 'SampleDt_us': 10}
+
+    range_cm = range_axis_cm(meta, 4)
+
+    # sample 0 is 8200 us after the ping started, not at 0 cm
+    assert range_cm[0] == pytest.approx(8200 * US_TO_CM)
+    np.testing.assert_allclose(np.diff(range_cm), 10 * US_TO_CM)
+    assert len(range_cm) == 4

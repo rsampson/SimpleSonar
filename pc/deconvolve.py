@@ -1,11 +1,12 @@
-"""Wiener (regularized inverse) deconvolution of the transducer ringdown.
+"""Wiener (regularized inverse) deconvolution of the ringdown/settling
+response seen at the microphone after each ping.
 
-The 11-element voice-coil array is driven at its mechanical resonance
-(~2750 Hz) where it is loud but very lightly damped: a ringdown capture
-measured Q ~ 47, f0 ~ 2775 Hz, -3 dB bandwidth ~ 60 Hz, and the ring
-falls to 10% only after ~34 cycles (~1200 of the 2048 samples). Every
-echo is therefore true_reflectivity * h(t) with a long h(t), so returns
-smear in range and adjacent targets merge into one ring train.
+The fitted 8 ohm speaker + electret microphone pair behaves (lumped, as seen
+at the microphone) like a resonator at ~4400 Hz with Q ~ 9: -3 dB bandwidth
+~ 490 Hz, amplitude down to 1/e in ~3 cycles. Every echo is therefore
+true_reflectivity * h(t) with h(t) that ring, so returns smear in range. The
+single damped-sinusoid model below is used regardless of how many physical
+causes (acoustic speaker ring, front-end amplifier settling) contribute.
 
 This module estimates the reflectivity series by dividing the received
 spectrum by H(f), the transfer function of a synthetic damped-sinusoid
@@ -17,8 +18,8 @@ the residual ring.
 Pure numpy rfft/irfft - no scipy, mirroring plot_echogram.hilbert_envelope's
 "reimplement the one transform we need" precedent.
 
-Fundamental limit: with B ~ 60 Hz the bandwidth-limited range resolution
-is c/(2B) ~ 2-3 m at the -3 dB points. Deconvolution widens the effective
+Fundamental limit: with B ~ 490 Hz the bandwidth-limited range resolution
+is c/(2B) ~ 35 cm at the -3 dB points. Deconvolution widens the effective
 processing band past those points only where SNR allows, so it visibly
 tightens the ring but the gain is noise-limited.
 """
@@ -28,31 +29,39 @@ import numpy as np
 from plot_matched_filter import make_ping_template, matched_filter
 
 # --- Impulse-response model (synthetic) ------------------------------------
-RINGDOWN_FREQUENCY_HZ = 2775.0   # measured array resonance (ringdown capture).
-                                 # NOT PING_FREQUENCY_HZ (2750) - the array rings
-                                 # at its own resonance regardless of the exact
-                                 # drive tone.
-RINGDOWN_Q = 47.0                # measured quality factor of the ringdown
+# f0 and Q fitted 2026-09-26 against the 8 ohm speaker + electret microphone
+# pair: a clean (unclipped) capture of a single target at ~210 cm, fitting
+# conv(template, h(f0, Q)) to each ping's echo (per-ping best delay and
+# complex gain, since the target drifted a few cm) over a 3700-5000 Hz x
+# Q 2-30 grid. Best R^2 ~0.32 vs ~0.01 for empty-room pings; each half of
+# the recording independently gave f0 4400-4450 Hz, Q 8-10.
+RINGDOWN_FREQUENCY_HZ = 4400.0   # fitted resonance of the lumped echo response.
+                                 # NOT the drive frequency - the ringing
+                                 # element rings at its own resonance
+                                 # regardless of the exact drive tone/band.
+                                 # (The chirp's 3280/3690 Hz steps sit mostly
+                                 # outside this band and barely come back.)
+RINGDOWN_Q = 9.0                 # fitted quality factor of the ringdown
                                  # envelope. h(t) ~ exp(-pi*f0*t/Q)*sin(2pi*f0*t):
                                  # amplitude decays to 1/e in Q/pi cycles
-                                 # (~15 cycles, ~5.3 ms here). Re-estimate per
-                                 # array: Q = pi * (cycles from ring peak to the
-                                 # 1/e envelope point) read off a strong single
-                                 # echo.
-IMPULSE_RESPONSE_SPAN_CYCLES = 40.0  # ringdown cycles of h(t) to model. The array
-                                     # rings ~34 cycles to 10%; 40 cycles captures
-                                     # the part worth undoing (~-3.4 Np, ~3% left)
-                                     # without an unbounded kernel. ~1450 samples
-                                     # at sample_dt_us=10.
+                                 # (~3 cycles, ~0.65 ms here). Re-estimate per
+                                 # transducer: Q = pi * (cycles from ring peak
+                                 # to the 1/e envelope point) read off a
+                                 # strong single echo, or fit as above.
+IMPULSE_RESPONSE_SPAN_CYCLES = 15.0  # ringdown cycles of h(t) to model. At Q=9,
+                                     # 15 cycles is exp(-pi*15/9) ~ 0.5% left -
+                                     # everything worth undoing, without a
+                                     # needlessly long kernel. ~340 samples at
+                                     # sample_dt_us=10.
 CONVOLVE_WITH_TEMPLATE = True    # convolve the bare ringdown with
                                  # make_ping_template() so h models the drive
-                                 # burst *as reshaped by the ringing array* - what
+                                 # burst *as reshaped by the ringing element* - what
                                  # a point reflector actually returns - matching
                                  # matched_filter's "the template is the real
                                  # transmitted burst" reasoning.
 
 # --- Wiener regularization -----------------------------------------------
-WIENER_LAMBDA = 3e-2   # constant noise-to-signal ratio, as a FRACTION of peak
+WIENER_LAMBDA = 1e-2   # constant noise-to-signal ratio, as a FRACTION of peak
                        # |H|^2 (dimensionless, independent of how h is scaled):
                        #   X_hat = Y * conj(H) / (|H|^2 + WIENER_LAMBDA*max|H|^2)
                        # caps inverse-filter gain at ~1/(2*sqrt(lambda)) and makes
@@ -60,21 +69,18 @@ WIENER_LAMBDA = 3e-2   # constant noise-to-signal ratio, as a FRACTION of peak
                        # sharper spike, noisier; higher = safer, less ring
                        # collapse.
                        #
-                       # 3e-2 picked by visual sweep (plot_lambda_sweep.py, 450
-                       # pings averaged, domain='mf') on a capture in a ~10x10 ft
-                       # room, transducer angled at a wall ~275 cm away (slant
-                       # range; the transducer is tilted). Chosen over 1e-2 for a
-                       # visibly smoother between-target background at a
-                       # near-identical target-peak width (~44 vs ~41 cm at
-                       # -6 dB); 1e-1 was too strong (ring not undone, near-field
-                       # blob dominates). CAVEAT: a cluttered small room is a poor
-                       # air-sonar test platform - that capture's strongest return
-                       # sat near the far edge of the 2048-sample window (~354 cm,
-                       # room clutter / edge pile-up) rather than cleanly on the
-                       # wall, so this is a sensible middle value, not a
-                       # precisely-optimised one. Re-sweep against an isolated
-                       # close reflector (2-3 ft, nothing else in view), or in a
-                       # larger/quieter space, when a better setup is available.
+                       # 1e-2 picked 2026-09-26 from a sweep on the same capture
+                       # as f0/Q above (55 pings, domain='mf', averaged envelope,
+                       # target -6 dB width / median 245-330 cm background):
+                       #   MF only  17.8 cm / -17.5 dB
+                       #   3e-3     11.6 cm / -12.7 dB
+                       #   1e-2     12.1 cm / -14.1 dB   <- chosen
+                       #   3e-2     13.1 cm / -14.6 dB
+                       #   1e-1     15.7 cm / -15.1 dB
+                       # Below 1e-2 the background rises fast for little
+                       # narrowing; above it the peak widens for little gain.
+                       # (The previous 3e-2 was picked against the retired
+                       # 11-element array, off a wall ~275 cm away.)
 
 # --- Toggle (single source of truth for all three call sites) -----------
 DECONV_ENABLED = False  # default OFF; the plot scripts flip it via --deconv
@@ -86,7 +92,7 @@ def make_impulse_response(sample_dt_us, *, q=RINGDOWN_Q,
                           f0_hz=RINGDOWN_FREQUENCY_HZ,
                           span_cycles=IMPULSE_RESPONSE_SPAN_CYCLES,
                           convolve_with_template=CONVOLVE_WITH_TEMPLATE):
-    """Return the array's echo impulse response h(t), sampled at the receiver rate.
+    """Return the echo impulse response h(t), sampled at the receiver rate.
 
     Synthetic second-order mechanical-resonator ringdown:
 
@@ -96,7 +102,7 @@ def make_impulse_response(sample_dt_us, *, q=RINGDOWN_Q,
     n = round(span_cycles / f0 / dt) samples (floored at 1). With
     convolve_with_template=True it is then convolved (np.convolve, 'full')
     with make_ping_template(sample_dt_us) so h represents the gated drive
-    burst *as reshaped by the ringing array* - i.e. the waveform a single
+    burst *as reshaped by the ringing element* - i.e. the waveform a single
     point reflector actually sends back.
 
     Returned float64, peak-normalized so abs(h).max() == 1.0. Zero-mean is

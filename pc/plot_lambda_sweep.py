@@ -29,7 +29,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import deconvolve
-from plot_sensor_stream import load_packets
+from plot_sensor_stream import load_packets, range_axis_cm
 from plot_matched_filter import make_ping_template, matched_filter, US_TO_CM
 from plot_echogram import hilbert_envelope
 
@@ -83,10 +83,11 @@ def main():
 
     sample_dt_us = packets[0][0]['SampleDt_us']
     n_samples = len(packets[0][1])
-    range_cm = np.arange(n_samples) * sample_dt_us * US_TO_CM
+    range_cm = range_axis_cm(packets[0][0], n_samples)
 
     # Blank the transmit-burst ringdown region, same as the echogram.
-    blank_samples = len(make_ping_template(sample_dt_us))
+    burst_range_cm = len(make_ping_template(sample_dt_us)) * sample_dt_us * US_TO_CM
+    blank_samples = int(np.searchsorted(range_cm, burst_range_cm))
 
     print(f"{len(packets)} pings, {n_samples} samples/ping, dt={sample_dt_us} us. "
           f"domain={args.domain}. Target marker at {args.target_cm:.1f} cm.")
@@ -108,7 +109,7 @@ def main():
 
     ax.axvline(args.target_cm, color='crimson', ls='--', lw=1,
                label=f"known target {args.target_cm:.0f} cm")
-    ax.set_xlim(0, range_cm[-1])
+    ax.set_xlim(range_cm[0], range_cm[-1])
     ax.set_ylim(-args.db_range, 2)
     ax.set_xlabel("One-way range (cm)")
     ax.set_ylabel("Averaged deconvolved envelope (dB re: each curve's peak)")

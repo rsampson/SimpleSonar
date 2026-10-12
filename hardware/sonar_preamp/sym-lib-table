@@ -1,0 +1,5 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "doit-esp32-devkit-v1") (type "Legacy") (uri "/home/richard/doit-esp32-devkit-kicad/doit-esp32-devkit-v1.lib") (options "") (descr ""))
+	(lib (name "esp32_30pin_revised") (type "KiCad") (uri "/home/richard/ESP32-DevKit-V1-DOIT/esp32_30pin_revised.kicad_sym") (options "") (descr ""))
+)
