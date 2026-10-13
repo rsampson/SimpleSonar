@@ -14,8 +14,8 @@ int16_t data_buffer[BUFFER_SIZE];
 // from earlier pings pile up under the next one's echoes; a longer interval
 // lets it decay first.
 #define PING_INTERVAL_MS 300
-#define PING_PIN_A 25
-#define PING_PIN_B 26
+#define PING_PIN 25             // single-ended drive into the audio amplifier
+#define UNUSED_PIN 26           // former inverted half of the differential drive
 #define ANALOG_PIN 34
 // PWM (LEDC) configuration for ESP32
 #define PING_FREQUENCY 3300      // Hz
@@ -29,11 +29,9 @@ int16_t data_buffer[BUFFER_SIZE];
 // needed to reach full amplitude while shrinking that dead zone.
 #define PING_CYCLES 6           // number of cycles to emit
 #define PING_RESOLUTION 8       // bits (0-255)
-// LEDC channels for the pair, pinned explicitly so both land on one timer
-// (the core reuses a timer with matching freq/resolution) and so
-// emit_differential_burst() can reset that timer to phase-lock each burst.
-#define PING_CHANNEL_A 0
-#define PING_CHANNEL_B 1
+// LEDC channel pinned explicitly so it lands on timer 0, which
+// emit_burst() resets to phase-lock each burst.
+#define PING_CHANNEL 0
 #define PING_DUTY 128           // duty (0 - 2^PING_RESOLUTION-1)
 // ADC configuration - set explicitly so sample rate/dynamic range are
 // deterministic rather than relying on core defaults. Sampling uses the
@@ -281,9 +279,8 @@ void process_commands() {
 
 // Emits the burst and returns esp_timer_get_time() at its true start.
 //
-// A and B free-run as hardware square waves at PING_FREQUENCY (configured
-// in setup(), with B's output hardware-inverted relative to A), so the
-// differential pair is generated entirely by the LEDC peripheral - no
+// PING_PIN free-runs as a hardware square wave at PING_FREQUENCY (configured
+// in setup()), so the tone is generated entirely by the LEDC peripheral - no
 // per-half-cycle software toggling needed.
 //
 // A duty change only takes effect at the next PWM period boundary, so on the
@@ -295,22 +292,20 @@ void process_commands() {
 // later every time: burst start = reset + 1 period, deterministically. The
 // off write is timed to latch half a period past the PING_CYCLES-th
 // boundary, giving exactly PING_CYCLES whole cycles.
-int64_t emit_differential_burst() {
+int64_t emit_burst() {
     const uint32_t periodUs = 1000000UL / PING_FREQUENCY;
     const uint32_t offDelayUs = periodUs * PING_CYCLES + periodUs / 2;
 
     int64_t t_reset = esp_timer_get_time();
     ledc_timer_rst(LEDC_HIGH_SPEED_MODE, LEDC_TIMER_0);
-    ledcWrite(PING_PIN_A, PING_DUTY);
-    ledcWrite(PING_PIN_B, PING_DUTY);
+    ledcWrite(PING_PIN, PING_DUTY);
 
     // Busy-wait to the off point, measured from the reset.
     while ((uint32_t)(esp_timer_get_time() - t_reset) < offDelayUs) {
     }
 
-    // End with both outputs quiet (latches at the next boundary).
-    ledcWrite(PING_PIN_A, 0);
-    ledcWrite(PING_PIN_B, 0);
+    // End with the output quiet (latches at the next boundary).
+    ledcWrite(PING_PIN, 0);
 
     return t_reset + periodUs;
 }
@@ -318,15 +313,12 @@ int64_t emit_differential_burst() {
 void setup() {
     Serial.begin(SERIAL_BAUD);
 
-    // Configure LEDC for the differential ping pair: both pins free-run in
-    // hardware at PING_FREQUENCY, with B's output inverted relative to A so
-    // the pair is always electrically complementary while attached.
-    ledcAttachChannel(PING_PIN_A, PING_FREQUENCY, PING_RESOLUTION, PING_CHANNEL_A);
-    ledcAttachChannel(PING_PIN_B, PING_FREQUENCY, PING_RESOLUTION, PING_CHANNEL_B);
-    ledcOutputInvert(PING_PIN_B, true);
+    // Single-ended drive: the audio amplifier takes one 0-3.3 V square wave.
+    ledcAttachChannel(PING_PIN, PING_FREQUENCY, PING_RESOLUTION, PING_CHANNEL);
+    ledcWrite(PING_PIN, 0);
 
-    ledcWrite(PING_PIN_A, 0);
-    ledcWrite(PING_PIN_B, 0);
+    // Leave the old differential pin high-impedance in case it's still wired.
+    pinMode(UNUSED_PIN, INPUT);
 
     init_adc_continuous();
 }
@@ -353,7 +345,7 @@ void loop() {
     header.ping_id = ping_id++;
     header.num_samples = BUFFER_SIZE;
 
-    header.t_ping_us = emit_differential_burst(); // timestamp of the burst's true start
+    header.t_ping_us = emit_burst(); // timestamp of the burst's true start
     delayMicroseconds(AFTER_DELAY_US);
 
     header.t_sample_us = esp_timer_get_time();
