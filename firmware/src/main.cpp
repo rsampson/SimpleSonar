@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_timer.h>
+#include <driver/ledc.h>
 #include <esp_adc/adc_continuous.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -23,6 +24,11 @@ int16_t data_buffer[BUFFER_SIZE];
 // needed to reach full amplitude while shrinking that dead zone.
 #define PING_CYCLES 6           // number of cycles to emit
 #define PING_RESOLUTION 8       // bits (0-255)
+// LEDC channels for the pair, pinned explicitly so both land on one timer
+// (the core reuses a timer with matching freq/resolution) and so
+// emit_differential_burst() can reset that timer to phase-lock each burst.
+#define PING_CHANNEL_A 0
+#define PING_CHANNEL_B 1
 #define PING_DUTY 128           // duty (0 - 2^PING_RESOLUTION-1)
 // ADC configuration - set explicitly so sample rate/dynamic range are
 // deterministic rather than relying on core defaults. Sampling uses the
@@ -268,22 +274,40 @@ void process_commands() {
     }
 }
 
-void emit_differential_burst() {
-    // A and B free-run as hardware square waves at PING_FREQUENCY (configured
-    // in setup(), with B's output hardware-inverted relative to A), so the
-    // differential pair is generated entirely by the LEDC peripheral - no
-    // per-half-cycle software toggling needed. Un-gate both channels for
-    // exactly PING_CYCLES worth of time, then gate them back to idle.
-    const uint32_t burstUs = (1000000ULL * PING_CYCLES) / PING_FREQUENCY;
+// Emits the burst and returns esp_timer_get_time() at its true start.
+//
+// A and B free-run as hardware square waves at PING_FREQUENCY (configured
+// in setup(), with B's output hardware-inverted relative to A), so the
+// differential pair is generated entirely by the LEDC peripheral - no
+// per-half-cycle software toggling needed.
+//
+// A duty change only takes effect at the next PWM period boundary, so on the
+// free-running timer the burst would start anywhere from 0 to 1 period
+// (~300 us) after the ledcWrite() call, at a different point every ping.
+// That random start scrambles the echo's phase against the ADC window and
+// defeats coherent (waveform) averaging across pings. Resetting the timer
+// first puts the counter at 0, so the first boundary is exactly one period
+// later every time: burst start = reset + 1 period, deterministically. The
+// off write is timed to latch half a period past the PING_CYCLES-th
+// boundary, giving exactly PING_CYCLES whole cycles.
+int64_t emit_differential_burst() {
+    const uint32_t periodUs = 1000000UL / PING_FREQUENCY;
+    const uint32_t offDelayUs = periodUs * PING_CYCLES + periodUs / 2;
 
+    int64_t t_reset = esp_timer_get_time();
+    ledc_timer_rst(LEDC_HIGH_SPEED_MODE, LEDC_TIMER_0);
     ledcWrite(PING_PIN_A, PING_DUTY);
     ledcWrite(PING_PIN_B, PING_DUTY);
 
-    delayMicroseconds(burstUs);
+    // Busy-wait to the off point, measured from the reset.
+    while ((uint32_t)(esp_timer_get_time() - t_reset) < offDelayUs) {
+    }
 
-    // End with both outputs quiet.
+    // End with both outputs quiet (latches at the next boundary).
     ledcWrite(PING_PIN_A, 0);
     ledcWrite(PING_PIN_B, 0);
+
+    return t_reset + periodUs;
 }
 
 void setup() {
@@ -292,8 +316,8 @@ void setup() {
     // Configure LEDC for the differential ping pair: both pins free-run in
     // hardware at PING_FREQUENCY, with B's output inverted relative to A so
     // the pair is always electrically complementary while attached.
-    ledcAttach(PING_PIN_A, PING_FREQUENCY, PING_RESOLUTION);
-    ledcAttach(PING_PIN_B, PING_FREQUENCY, PING_RESOLUTION);
+    ledcAttachChannel(PING_PIN_A, PING_FREQUENCY, PING_RESOLUTION, PING_CHANNEL_A);
+    ledcAttachChannel(PING_PIN_B, PING_FREQUENCY, PING_RESOLUTION, PING_CHANNEL_B);
     ledcOutputInvert(PING_PIN_B, true);
 
     ledcWrite(PING_PIN_A, 0);
@@ -322,8 +346,7 @@ void loop() {
     header.ping_id = ping_id++;
     header.num_samples = BUFFER_SIZE;
 
-    header.t_ping_us = esp_timer_get_time();
-    emit_differential_burst();
+    header.t_ping_us = emit_differential_burst(); // timestamp of the burst's true start
     delayMicroseconds(AFTER_DELAY_US);
 
     header.t_sample_us = esp_timer_get_time();
