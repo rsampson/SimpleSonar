@@ -9,6 +9,11 @@
 int16_t data_buffer[BUFFER_SIZE];
 
 // Ping output and analog input pins
+// Minimum time between the starts of successive bursts. Pinging back-to-back
+// (the serial transfer alone takes ~70 ms) lets the room's reverberation
+// from earlier pings pile up under the next one's echoes; a longer interval
+// lets it decay first.
+#define PING_INTERVAL_MS 300
 #define PING_PIN_A 25
 #define PING_PIN_B 26
 #define ANALOG_PIN 34
@@ -340,6 +345,8 @@ void loop() {
     // near-range echo unless this is long enough - verify on a scope.
     const unsigned int AFTER_DELAY_US = 1000;
 
+    const uint32_t loop_start_ms = millis();
+
     PingHeader header;
     header.sync[0] = 0xAA;
     header.sync[1] = 0xBB;
@@ -354,5 +361,11 @@ void loop() {
     capture_samples();
 
     send_data(header);
+
+    // Pad out to PING_INTERVAL_MS, staying responsive to START/STOP.
+    while (ping_enabled && (millis() - loop_start_ms) < PING_INTERVAL_MS) {
+        process_commands();
+        delay(1);
+    }
 }
 
