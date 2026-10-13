@@ -3,7 +3,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plot_sensor_stream import META_COLUMNS
+from plot_sensor_stream import META_COLUMNS, range_axis_cm
 from plot_matched_filter import make_ping_template, matched_filter, US_TO_CM
 from plot_echogram import hilbert_envelope
 
@@ -123,12 +123,12 @@ def process_new_packets(new_packets, live_state):
             n_samples = meta['NumSamples']
             live_state['n_samples'] = n_samples
             live_state['sample_dt_us'] = sample_dt_us
-            live_state['range_cm'] = np.arange(n_samples) * sample_dt_us * US_TO_CM
+            live_state['range_cm'] = range_axis_cm(meta, n_samples)
             template = make_ping_template(sample_dt_us)
             live_state['template'] = template
             blank_cm = len(template) * sample_dt_us * US_TO_CM
             live_state['blank_cm'] = blank_cm
-            live_state['blank_samples'] = int(np.ceil(blank_cm / (sample_dt_us * US_TO_CM))) if sample_dt_us > 0 else 0
+            live_state['blank_samples'] = int(np.count_nonzero(live_state['range_cm'] < blank_cm))
 
         tmpl = make_ping_template(meta['SampleDt_us'])
         mf = matched_filter(values, tmpl)

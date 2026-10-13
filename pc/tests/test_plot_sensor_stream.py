@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from plot_sensor_stream import load_packets
@@ -49,3 +50,14 @@ def test_load_packets_header_only_returns_empty_list(tmp_path):
     packets = load_packets(str(csv_path))
 
     assert packets == []
+
+
+def test_range_axis_includes_burst_to_first_sample_offset():
+    from plot_sensor_stream import US_TO_CM, range_axis_cm
+
+    meta = {'T_ping_us': 1_000_000, 'T_sample_us': 1_002_800, 'SampleDt_us': 10}
+
+    range_cm = range_axis_cm(meta, 4)
+
+    assert range_cm[0] == pytest.approx(2800 * US_TO_CM)
+    assert np.diff(range_cm) == pytest.approx(10 * US_TO_CM)

@@ -3,7 +3,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plot_sensor_stream import load_packets, META_COLUMNS
+from plot_sensor_stream import load_packets, META_COLUMNS, range_axis_cm
 
 INPUT_FILE = 'sensor_stream.csv'
 
@@ -99,16 +99,16 @@ def main():
         tmpl = make_ping_template(sample_dt_us)
 
         n = len(values)
-        range_cm = np.arange(n) * sample_dt_us * US_TO_CM
+        range_cm = range_axis_cm(meta, n)
 
         line_raw.set_data(range_cm, values)
-        ax_raw.set_xlim(0, range_cm[-1])
+        ax_raw.set_xlim(range_cm[0], range_cm[-1])
         ax_raw.relim()
         ax_raw.autoscale_view(scalex=False, scaley=True)
 
         mf = matched_filter(values, tmpl)
         line_mf.set_data(range_cm, mf)
-        ax_mf.set_xlim(0, range_cm[-1])
+        ax_mf.set_xlim(range_cm[0], range_cm[-1])
         ax_mf.relim()
         ax_mf.autoscale_view(scalex=False, scaley=True)
 
