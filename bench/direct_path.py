@@ -9,6 +9,13 @@ averaged pulse (direct_pulse.npy, usable as a matched-filter template) and a
 plot. The first arrival is read from the raw coherent mean (a zero-phase
 band-pass would smear it earlier); strongest returns can be later than the
 first because of room reflections, so don't use the envelope peak.
+
+Reflecting surfaces near the mic or speaker put copies of the pulse into the
+averaged waveform: a surface d behind the mic adds 2d of path, i.e. a copy
+2d / c later (c = 345.8 m/s). Only use the first ~2d/c after the arrival as a
+pulse template, and measure the distance accurately: a tape tolerance of 1 mm
+is ~3 us of timing. The quoted jitter is real, but an approximate distance only
+checks the speed of sound to within its own error.
 """
 
 import argparse
