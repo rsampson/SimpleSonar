@@ -1,0 +1,32 @@
+{
+  "name": "ad828-v1-biasRC-R2k2",
+  "created": "2026-10-14T14:37:23",
+  "hardware": {
+    "description": "Same as ad828-v1-biasRC-ampOff-lampsOff but 2.2k resistor from node to ground (short leads) in place of open node; amp off; lamps off"
+  },
+  "setup": {},
+  "tests": {
+    "crosstalk": {
+      "conditions": {
+        "pings": 60,
+        "floor_from_T0": false
+      },
+      "result": {
+        "pings": 60,
+        "rms_counts": 18.170065568713895,
+        "rms_counts_below_300hz": 9.725586331221276,
+        "rms_counts_in_band": 10.433787994701051,
+        "band_hz": [
+          2000,
+          6000
+        ],
+        "floor_counts_rms_in_band": 15.447851513014532,
+        "in_band_below_floor_after_ms": 2.671,
+        "first_sample_ms_after_burst": 2.671
+      },
+      "run_at": "2026-10-14T14:37:46"
+    }
+  },
+  "updated": "2026-10-14T14:37:46",
+  "git_commit": "4b46e37"
+}

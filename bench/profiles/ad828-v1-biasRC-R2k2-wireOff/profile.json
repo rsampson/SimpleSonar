@@ -1,0 +1,32 @@
+{
+  "name": "ad828-v1-biasRC-R2k2-wireOff",
+  "created": "2026-10-14T14:43:09",
+  "hardware": {
+    "description": "Same as ad828-v1-biasRC-R2k2 but GPIO25-to-amp-input wire disconnected (amp off, lamps off)"
+  },
+  "setup": {},
+  "tests": {
+    "crosstalk": {
+      "conditions": {
+        "pings": 60,
+        "floor_from_T0": false
+      },
+      "result": {
+        "pings": 60,
+        "rms_counts": 17.920926496434237,
+        "rms_counts_below_300hz": 9.566129808423934,
+        "rms_counts_in_band": 10.305849691845617,
+        "band_hz": [
+          2000,
+          6000
+        ],
+        "floor_counts_rms_in_band": 16.061231375024693,
+        "in_band_below_floor_after_ms": 2.671,
+        "first_sample_ms_after_burst": 2.671
+      },
+      "run_at": "2026-10-14T14:43:32"
+    }
+  },
+  "updated": "2026-10-14T14:43:32",
+  "git_commit": "4b46e37"
+}

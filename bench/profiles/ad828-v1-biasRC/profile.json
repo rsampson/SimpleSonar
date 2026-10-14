@@ -1,0 +1,32 @@
+{
+  "name": "ad828-v1-biasRC",
+  "created": "2026-10-14T14:21:38",
+  "hardware": {
+    "description": "Same as ad828-v1-bias3k6-ampPSU but mic bias is 1.8k+1.8k with 100uF to ground at the junction; amp on own 5V/850mA supply; pad lifted; no mic; amp input connected"
+  },
+  "setup": {},
+  "tests": {
+    "crosstalk": {
+      "conditions": {
+        "pings": 60,
+        "floor_from_T0": false
+      },
+      "result": {
+        "pings": 60,
+        "rms_counts": 27.99641214059483,
+        "rms_counts_below_300hz": 14.908428783179946,
+        "rms_counts_in_band": 15.826970841058705,
+        "band_hz": [
+          2000,
+          6000
+        ],
+        "floor_counts_rms_in_band": 25.621643686432822,
+        "in_band_below_floor_after_ms": 2.671,
+        "first_sample_ms_after_burst": 2.671
+      },
+      "run_at": "2026-10-14T14:22:01"
+    }
+  },
+  "updated": "2026-10-14T14:22:01",
+  "git_commit": "4b46e37"
+}

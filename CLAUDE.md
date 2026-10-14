@@ -98,5 +98,8 @@ Key tunables live at the top of `main.cpp`: `PING_FREQUENCY`, `PING_CYCLES`, ADC
 
 ## Working notes
 
+- **Supply isolation matters more than anything else in the analog front end** (bench-measured, 2026-10-14; profiles in `bench/profiles/ad828-v1*`). With the mic-bias resistor fitted, the speaker amp sharing the ESP32's VIN rail put a 767 counts RMS slow transient (−1178..+1979 counts) on the preamp output after every burst; the amp on its own supply cut it to ~12. A further ~4-7x drop in per-ping noise and ping-locked pickup (22 → 5.8 and 18 → 2.9 counts RMS) came from filtering the preamp's own supply (22 Ω + 100 µF + 0.1 µF at its pins) and joining the grounds at a single point. Keep the amp on its own supply, keep the preamp supply filtered, and re-run `bench/run_test.py ... crosstalk` after any wiring change.
+- The preamp measured (`ad828-v1`): gain 93 counts/mV (37.5 dB nominal), −3 dB band 75 Hz–5.1 kHz (two 7.9 kHz low-pass poles; 3.2 kHz sits −1.2 dB down), 36.8 dB rejection at 60 kHz, ADC-limited noise floor (~1 count RMS in 2-6 kHz with a low-impedance input).
+
 - This is a real physical hardware project with an admittedly fragile current build (transducer/preamp/wiring). When captured data looks physically implausible (noise, drift, gain, oscillation) but the serial framing/protocol layer is clean (`ping_id` continuity, no resync warnings), suspect the hardware/wiring before the firmware or PC code.
 - Firmware and PC-side packet definitions (`PingHeader` in main.cpp, `HEADER_FORMAT` in receive.py) must be changed together — there's no shared schema file.
