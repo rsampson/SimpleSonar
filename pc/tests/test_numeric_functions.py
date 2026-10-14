@@ -93,3 +93,38 @@ def test_make_ping_template_minimum_length_floor():
     template = make_ping_template(huge_sample_dt_us)
 
     assert len(template) == 1
+
+
+def _packets_with(echo_at, n_pings=6, n_samples=600, seed=0):
+    """Synthetic packets: static clutter every ping, plus (optionally) a burst-shaped echo."""
+    rng = np.random.default_rng(seed)
+    clutter = rng.normal(0, 50, n_samples)
+    template = make_ping_template(sample_dt_us=10)
+    packets = []
+    for i in range(n_pings):
+        v = 1800 + clutter + rng.normal(0, 1, n_samples)
+        if echo_at is not None:
+            v[echo_at:echo_at + len(template)] += 100 * template
+        meta = {'SampleDt_us': 10, 'T_ping_us': i * 300_000, 'T_sample_us': i * 300_000 + 2700}
+        packets.append((meta, list(v)))
+    return packets
+
+
+def test_background_subtraction_removes_static_clutter_and_keeps_the_echo():
+    from plot_echogram import background_mean, build_echogram
+
+    background = background_mean(_packets_with(None))
+    target = _packets_with(300)
+
+    plain, range_cm, _, _ = build_echogram(target)
+    clean, _, _, _ = build_echogram(target, background)
+
+    # with the background removed the strongest return is at the echo and it
+    # stands far above the residual; without it the static clutter (50 counts
+    # RMS vs the 100-count echo) leaves the echo barely above its surroundings
+    assert abs(int(np.nanargmax(clean.mean(axis=1))) - 300) <= 3
+    echo = np.nanmean(clean[295:310])
+    elsewhere = np.nanmedian(clean[400:])
+    assert echo > 20 * elsewhere
+    plain_ratio = np.nanmean(plain[295:310]) / np.nanmedian(plain[400:])
+    assert echo / elsewhere > 5 * plain_ratio

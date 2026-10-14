@@ -1,3 +1,4 @@
+import argparse
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -49,8 +50,22 @@ def hilbert_envelope(x):
     return np.abs(analytic)
 
 
-def build_echogram(packets):
-    """Return (image [range x ping], range_cm, ping_times) for imshow."""
+def background_mean(packets):
+    """Mean waveform over the pings of a no-target capture (per-sample average)."""
+    return np.mean([v for _, v in packets], axis=0)
+
+
+def build_echogram(packets, background=None):
+    """Return (image [range x ping], range_cm, ping_times, blank_cm) for imshow.
+
+    background: optional mean waveform (see background_mean) subtracted from
+    every ping before the matched filter. The burst is phase-locked to the
+    capture, so static clutter - the direct sound's ring-down, room
+    reverberation - repeats ping after ping and cancels, leaving only what
+    changed since the background was recorded (a new target). Record the
+    background back-to-back with the data, in the same system state, with
+    nobody in the beam.
+    """
     n_samples = len(packets[0][1])
     sample_dt_us = packets[0][0]['SampleDt_us']
     range_cm = range_axis_cm(packets[0][0], n_samples)
@@ -64,6 +79,8 @@ def build_echogram(packets):
     ping_times = []
     for meta, values in packets:
         tmpl = make_ping_template(meta['SampleDt_us'])
+        if background is not None:
+            values = np.asarray(values, dtype=float) - background
         mf = matched_filter(values, tmpl)
         env = hilbert_envelope(mf)
         env[:blank_samples] = np.nan
@@ -84,12 +101,25 @@ def to_db(image):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Full-recording echogram of sensor_stream.csv")
+    parser.add_argument('--background', metavar='CSV',
+                        help="no-target capture (same CSV format) whose mean waveform is subtracted from every ping")
+    args = parser.parse_args()
+
     packets = load_packets(INPUT_FILE)
     if not packets:
         print(f"No packets found in {INPUT_FILE}.")
         sys.exit(1)
 
-    image, range_cm, ping_times_s, blank_cm = build_echogram(packets)
+    background = None
+    if args.background:
+        bg_packets = load_packets(args.background)
+        if not bg_packets:
+            print(f"No packets found in {args.background}.")
+            sys.exit(1)
+        background = background_mean(bg_packets)
+
+    image, range_cm, ping_times_s, blank_cm = build_echogram(packets, background)
     db, peak = to_db(image)
 
     print(f"Loaded {len(packets)} pings. Blanking range below {blank_cm:.1f} cm "
