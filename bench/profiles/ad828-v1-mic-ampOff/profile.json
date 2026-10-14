@@ -1,0 +1,61 @@
+{
+  "name": "ad828-v1-mic-ampOff",
+  "created": "2026-10-14T15:29:49",
+  "hardware": {
+    "description": "Real electret mic + bias network installed, preamp with filtered supply, speaker amp disconnected; quiet-room noise"
+  },
+  "setup": {},
+  "tests": {
+    "noise": {
+      "conditions": {
+        "pings": 60
+      },
+      "result": {
+        "pings": 60,
+        "rms_counts": 21.769923189209063,
+        "rms_counts_band_2k_6k": 3.6255975131880183,
+        "ping_locked_rms_counts": 20.60742851838185,
+        "dc_counts": 1814.2206868489584,
+        "floor_asd_counts_per_rthz": 0.019197976205181495,
+        "spurs": [
+          {
+            "hz": 292.96874999999994,
+            "asd_counts_per_rthz": 0.13996356561596277
+          },
+          {
+            "hz": 2490.2343749999995,
+            "asd_counts_per_rthz": 0.09493457720213606
+          },
+          {
+            "hz": 2587.8906249999995,
+            "asd_counts_per_rthz": 0.0862666059100839
+          },
+          {
+            "hz": 2685.5468749999995,
+            "asd_counts_per_rthz": 0.0864827901131457
+          },
+          {
+            "hz": 2832.0312499999995,
+            "asd_counts_per_rthz": 0.08562913272669485
+          },
+          {
+            "hz": 2929.6874999999995,
+            "asd_counts_per_rthz": 0.09074193826098192
+          },
+          {
+            "hz": 3027.3437499999995,
+            "asd_counts_per_rthz": 0.09104475747672376
+          },
+          {
+            "hz": 3124.9999999999995,
+            "asd_counts_per_rthz": 0.08530106226948563
+          }
+        ],
+        "input_referred_uv_rms": null
+      },
+      "run_at": "2026-10-14T15:30:12"
+    }
+  },
+  "updated": "2026-10-14T15:30:12",
+  "git_commit": "5bec6e8"
+}
