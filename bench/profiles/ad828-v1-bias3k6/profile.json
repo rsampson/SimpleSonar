@@ -1,0 +1,32 @@
+{
+  "name": "ad828-v1-bias3k6",
+  "created": "2026-10-14T13:25:48",
+  "hardware": {
+    "description": "Same preamp as ad828-v1; pad disconnected from node; 3.6k bias resistor node->3.3V reinstalled; electret removed; speaker amp connected"
+  },
+  "setup": {},
+  "tests": {
+    "crosstalk": {
+      "conditions": {
+        "pings": 60,
+        "floor_from_T0": false
+      },
+      "result": {
+        "pings": 60,
+        "rms_counts": 766.7680869000817,
+        "rms_counts_below_300hz": 748.386973585877,
+        "rms_counts_in_band": 9.029766090516471,
+        "band_hz": [
+          2000,
+          6000
+        ],
+        "floor_counts_rms_in_band": 10.183956209338424,
+        "in_band_below_floor_after_ms": 5.351,
+        "first_sample_ms_after_burst": 2.671
+      },
+      "run_at": "2026-10-14T13:26:11"
+    }
+  },
+  "updated": "2026-10-14T13:26:11",
+  "git_commit": "ec8d977"
+}

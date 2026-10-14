@@ -21,7 +21,7 @@ pio device monitor        # serial monitor (921600 baud)
 
 Note: system-wide `pio` (apt package) has been broken on this machine (Click library incompatibility) — use `~/.platformio/penv/bin/pio` if the `pio` on PATH fails.
 
-Upload/monitor port is hardcoded in `firmware/platformio.ini` (`/dev/ttyUSB1`) and may need updating since the ESP32's USB-serial enumeration has been observed to shift between `/dev/ttyUSB0`/`/dev/ttyUSB1` depending on what else is plugged in.
+Upload/monitor port is hardcoded in `firmware/platformio.ini` (currently `/dev/ttyUSB0`) and may need updating since the ESP32's USB-serial enumeration has been observed to shift between `/dev/ttyUSB0`/`/dev/ttyUSB1` depending on what else is plugged in.
 
 ### PC (from `pc/`)
 
@@ -40,6 +40,15 @@ pytest                         # run the pc/tests/ suite (also runnable as `pyte
 ```
 
 All plotting scripts read `sensor_stream.csv` from the current directory. `pc/` has a pytest suite (`pc/tests/`, config in `pc/pyproject.toml`) covering packet framing/parsing (`receive.py`'s `parse_next_event`), `BufferedReader`, CSV loading, the live-tailing logic in `plot_echogram_live.py`, and the matched-filter/envelope math — it does not cover the hardware-facing serial handshake (`_probe_port`/`find_sonar_port`) or matplotlib rendering, which need real hardware/manual verification. `firmware/test/` is an untouched PlatformIO scaffold.
+
+### Bench (from repo root)
+
+```bash
+python bench/run_test.py --profile NAME setup|noise|step|sine|linearity|crosstalk|reanalyze|report
+pytest bench/                  # synthetic-signal tests for the analysis + an offline CLI run
+```
+
+`bench/` characterizes the electronics alone: with the mic removed, a bench generator drives the mic node through a ÷1000 (or ÷100) resistor pad and the tools measure noise, step/frequency response, linearity and burst crosstalk, saving each build as a profile in `bench/profiles/NAME/` (`profile.json`, `response.npz`, `raw/*.csv`, `report.md`). Firmware pings normally during the tests; the generator is unsynchronised, so the ping-locked part of each capture (the across-ping mean) is subtracted before analysing the stimulus and is itself the crosstalk measurement. It reuses `pc/receive.py`'s parser and `pc/plot_*` helpers via `sys.path` and leaves `pc/` unchanged. Procedure and pad wiring: `bench/README.md`; plan: `hardware/signal_chain_characterization_plan.md`.
 
 ## Architecture
 
@@ -67,7 +76,7 @@ Defined by the packed `PingHeader` struct in `firmware/src/main.cpp` and mirrore
 
 1. `emit_burst()` drives a single-ended square wave on `PING_PIN` (GPIO25) into an audio amplifier and 2.5" 8 Ω speaker via one hardware LEDC PWM channel, free-running at `PING_FREQUENCY` and gated on for `PING_CYCLES` cycles. (The earlier piezo transducer needed a differential pair on GPIO25/26; GPIO26 is now `UNUSED_PIN`, left as a high-impedance input.) The receiver is an electret microphone on `ANALOG_PIN` (GPIO34, input-only). The LEDC timer is reset before each burst (`ledc_timer_rst` on timer 0, channel pinned via `PING_CHANNEL`) so the burst starts exactly one period after the reset instead of at a random point in the free-running cycle (a duty change only latches at the next period boundary); this phase-locks every ping to the ADC window so waveforms can be averaged coherently. `emit_burst()` returns the true burst-start timestamp, which becomes `t_ping_us`. `PING_INTERVAL_MS` (300) spaces successive bursts: at the ~74 ms the serial transfer alone allows, the garage's reverberation from earlier pings piled up under later echoes (a 162 cm target visibly changed the signal at 60 cm, before any echo could arrive); at 300 ms that pre-echo contamination dropped ~8x. Direct-path speaker→mic measurements (mic 50 in and 100 in away) put the received pulse at ~3.2 kHz with a ~2.9-3.5 kHz -3 dB band and Q≈7: it builds over ~1.7 ms (≈ the 1.82 ms, 6-cycle burst) and decays to 1/e in ~0.7 ms, so the burst length, not transducer ringing, now sets range resolution. Arrival times matched the 345.8 m/s prediction to ~20 µs, i.e. the timestamps/range axis carry no meaningful fixed delay; use an echo's leading edge, not its envelope peak (~1.7 ms late), as the range marker. The slow (<300 Hz) transient present early in every ping is electrical coupling, not acoustic (it persists with the mic 2.5 m away). The old piezo was narrowband (Q~14), which is why the cycle count was kept small and a stepped-chirp drive was reverted; that implementation is preserved on the `chirp-drive` git branch and may be worth revisiting with the lower-Q speaker.
 2. After an `AFTER_DELAY_US` settle delay (transducer mechanical ringdown), `capture_samples()` reads `BUFFER_SIZE` (2048) samples via the ESP-IDF ADC continuous/DMA driver at a true hardware-clocked `ADC_SAMPLE_FREQ_HZ` (100 kHz) — not `analogRead()`, which is software-timed and jittery (~25-40 kHz).
-3. `repair_adc_glitches()` linearly interpolates across short runs of spurious exact-zero samples that the original ESP32's ADC digital controller emits at each hardware burst restart (a driver artifact, not real signal).
+3. `capture_samples()` first swaps every adjacent pair of samples back into time order: the original ESP32's ADC DMA delivers each pair swapped, which (found on the bench, and confirmed by the image amplitude tracking tan(2πf/fs) from 100 Hz to 15 kHz) put every sample up to one sample period from its true time, alternating, added an image of every tone at fs/2 − f, and attenuated the fundamental by cos(2πf/fs). Captures recorded before this fix (everything from before 2026-10-14, including the earlier sonar and direct-path data) have the swap; bench profile data was corrected offline. Then `repair_adc_glitches()` linearly interpolates across short runs of spurious exact-zero samples that the original ESP32's ADC digital controller emits at each hardware burst restart (a driver artifact, not real signal).
 4. `send_data()` writes the header + raw `int16_t` payload straight to `Serial`.
 
 Key tunables live at the top of `main.cpp`: `PING_FREQUENCY`, `PING_CYCLES`, ADC resolution/attenuation/`ADC_SAMPLE_FREQ_HZ`, `SERIAL_BAUD`.

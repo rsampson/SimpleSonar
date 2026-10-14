@@ -15,3 +15,6 @@ pc/sensor_stream.csv
 
 # OS cruft
 .DS_Store
+
+# Bench raw captures (large; kept locally, profile.json/report/plots are committed)
+bench/profiles/*/raw/

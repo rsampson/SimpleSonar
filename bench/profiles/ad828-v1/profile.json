@@ -1,0 +1,383 @@
+{
+  "name": "ad828-v1",
+  "created": "2026-10-14T11:28:25",
+  "hardware": {
+    "description": "AD828 two-stage inverting preamp (2.2k in / 20k fb, 1nF across each 20k); input 10uF+2.2k; output 0.1uF into 10k/10k ADC bias (1.65V); mic bias R removed, electret removed; speaker amp disconnected. Pad: 4.7k/47 (nominal, 5%)"
+  },
+  "setup": {
+    "r_series_div100": 4700.0,
+    "r_shunt": 47.0,
+    "pad_ratio_div100": 0.009900990099009901,
+    "raw_pair_swap_corrected_offline": [
+      "sine_100.csv",
+      "sine_1000.csv",
+      "sine_10000.csv",
+      "sine_15000.csv",
+      "sine_200.csv",
+      "sine_2000.csv",
+      "sine_3200.csv",
+      "sine_4000.csv",
+      "sine_500.csv",
+      "sine_5000.csv",
+      "sine_6000.csv",
+      "sine_8000.csv",
+      "step.csv"
+    ],
+    "note_pair_swap": "These captures were recorded before the firmware swapped back the ESP32 ADC DMA's adjacent-sample pairs (see CLAUDE.md); adjacent pairs were swapped back offline in place. Later captures need no correction."
+  },
+  "tests": {
+    "step": {
+      "conditions": {
+        "generator_vpp": 1.0,
+        "tap": 100,
+        "square_hz": 50,
+        "input_step_mv": 9.900990099009901,
+        "pings": 60
+      },
+      "result": {
+        "edges": 69,
+        "peak_gain_counts_per_mv": 100.33623004600729,
+        "peak_gain_db_nominal": 38.15223542143408,
+        "peak_freq_hz": 778.642936596218,
+        "low_corner_hz": null,
+        "high_corner_hz": 2991.832068083858,
+        "step_peak_counts_per_mv": 91.8733248325399,
+        "rise_10_90_us": 70.0,
+        "settle_2pct_ms_after_peak": 4.989999999999999,
+        "edge_noise_counts": 9.199564283967826,
+        "freq_resolution_hz": 111.23470522803115,
+        "clip_fraction": 0.0
+      },
+      "run_at": "2026-10-14T13:05:33"
+    },
+    "sine": {
+      "conditions": {
+        "pings_per_point": 60
+      },
+      "result": {
+        "points": [
+          {
+            "f_generator_hz": 100.0,
+            "f_observed_hz": 99.37767001499671,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 359.66349402124246,
+            "output_counts_pk_std": 20.345070695215203,
+            "gain_counts_per_mv": 72.65202579229097,
+            "gain_db_nominal": 35.34803440720723,
+            "thd_pct": 1.5859689239277588,
+            "residual_rms_counts": 17.519160744744944,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_100.csv"
+          },
+          {
+            "f_generator_hz": 200.0,
+            "f_observed_hz": 200.42073404698164,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 432.9072526342772,
+            "output_counts_pk_std": 34.30266254845556,
+            "gain_counts_per_mv": 87.447265032124,
+            "gain_db_nominal": 36.958004462116335,
+            "thd_pct": 1.9020076771382923,
+            "residual_rms_counts": 24.8670848444858,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_200.csv"
+          },
+          {
+            "f_generator_hz": 500.0,
+            "f_observed_hz": 500.2775656981338,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 457.83599640515774,
+            "output_counts_pk_std": 42.07006794880046,
+            "gain_counts_per_mv": 92.48287127384187,
+            "gain_db_nominal": 37.44430593080145,
+            "thd_pct": 1.67346838054877,
+            "residual_rms_counts": 31.916295669978748,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_500.csv"
+          },
+          {
+            "f_generator_hz": 1000.0,
+            "f_observed_hz": 998.2937265742754,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 461.804219133873,
+            "output_counts_pk_std": 1.7572283722529332,
+            "gain_counts_per_mv": 93.28445226504235,
+            "gain_db_nominal": 37.519265155110816,
+            "thd_pct": 1.2067047991525464,
+            "residual_rms_counts": 0.0,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_1000.csv"
+          },
+          {
+            "f_generator_hz": 2000.0,
+            "f_observed_hz": 1998.8539073383747,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 442.43017040962206,
+            "output_counts_pk_std": 11.51535068448423,
+            "gain_counts_per_mv": 89.37089442274366,
+            "gain_db_nominal": 37.14700192560138,
+            "thd_pct": 1.139911843002132,
+            "residual_rms_counts": 9.515494400383723,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_2000.csv"
+          },
+          {
+            "f_generator_hz": 3200.0,
+            "f_observed_hz": 3200.9344141067595,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 402.1932865409541,
+            "output_counts_pk_std": 12.957295757274284,
+            "gain_counts_per_mv": 81.24304388127273,
+            "gain_db_nominal": 36.318803567637524,
+            "thd_pct": 1.0567651726765157,
+            "residual_rms_counts": 10.345076981519197,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_3200.csv"
+          },
+          {
+            "f_generator_hz": 4000.0,
+            "f_observed_hz": 4000.60170613309,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 369.5098577987045,
+            "output_counts_pk_std": 23.821852225301853,
+            "gain_counts_per_mv": 74.64099127533831,
+            "gain_db_nominal": 35.582627807352374,
+            "thd_pct": 0.9741512397664832,
+            "residual_rms_counts": 17.60094687714921,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_4000.csv"
+          },
+          {
+            "f_generator_hz": 5000.0,
+            "f_observed_hz": 4998.916633122069,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 331.3798152568057,
+            "output_counts_pk_std": 10.119749291386412,
+            "gain_counts_per_mv": 66.93872268187475,
+            "gain_db_nominal": 34.63662825692662,
+            "thd_pct": 0.651903832712938,
+            "residual_rms_counts": 8.526680132906417,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_5000.csv"
+          },
+          {
+            "f_generator_hz": 6000.0,
+            "f_observed_hz": 6001.114859089021,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 292.62258307764006,
+            "output_counts_pk_std": 5.794101256713944,
+            "gain_counts_per_mv": 59.10976178168329,
+            "gain_db_nominal": 33.55626402023705,
+            "thd_pct": 0.9252889893532876,
+            "residual_rms_counts": 6.161500414974052,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_6000.csv"
+          },
+          {
+            "f_generator_hz": 8000.0,
+            "f_observed_hz": 8000.364656173368,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 222.84485020304206,
+            "output_counts_pk_std": 13.37148015514824,
+            "gain_counts_per_mv": 45.0146597410145,
+            "gain_db_nominal": 31.190159272738715,
+            "thd_pct": 0.5460988842457792,
+            "residual_rms_counts": 10.244933751658031,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_8000.csv"
+          },
+          {
+            "f_generator_hz": 10000.0,
+            "f_observed_hz": 10000.05404933578,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 146.5255433657197,
+            "output_counts_pk_std": 44.30806393836064,
+            "gain_counts_per_mv": 29.59815975987538,
+            "gain_db_nominal": 27.548374038451332,
+            "thd_pct": 3.7101420423150926,
+            "residual_rms_counts": 31.591757322898193,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_10000.csv"
+          },
+          {
+            "f_generator_hz": 15000.0,
+            "f_observed_hz": 15047.962640309574,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 97.25139699299056,
+            "output_counts_pk_std": 3.391503477779201,
+            "gain_counts_per_mv": 19.644782192584096,
+            "gain_db_nominal": 23.988024198707013,
+            "thd_pct": 0.5365883791787411,
+            "residual_rms_counts": 6.5434966373478725,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_15000.csv"
+          },
+          {
+            "f_generator_hz": 20000.0,
+            "f_observed_hz": 20014.21478251726,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 61.072429530334276,
+            "output_counts_pk_std": 2.65871517576279,
+            "gain_counts_per_mv": 12.336630765127524,
+            "gain_db_nominal": 19.947011168440735,
+            "thd_pct": 0.9057693508046981,
+            "residual_rms_counts": 4.4987729822719835,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_20000.csv"
+          },
+          {
+            "f_generator_hz": 30000.0,
+            "f_observed_hz": 29997.109290146054,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 27.68822744388126,
+            "output_counts_pk_std": 5.776059022733841,
+            "gain_counts_per_mv": 5.593021943664015,
+            "gain_db_nominal": 13.076010303056156,
+            "thd_pct": 2.377500206822768,
+            "residual_rms_counts": 5.519329956090718,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_30000.csv"
+          },
+          {
+            "f_generator_hz": 45000.0,
+            "f_observed_hz": 45006.26174836369,
+            "aliased": false,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 11.858025047486317,
+            "output_counts_pk_std": 3.7491929536775674,
+            "gain_counts_per_mv": 2.395321059592236,
+            "gain_db_nominal": 5.710354494376556,
+            "thd_pct": 7.098931594350583,
+            "residual_rms_counts": 4.7528432989205065,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_45000.csv"
+          },
+          {
+            "f_generator_hz": 60000.0,
+            "f_observed_hz": 39996.61530230297,
+            "aliased": true,
+            "input_mv_pk": 4.9504950495049505,
+            "output_counts_pk": 6.652129241956847,
+            "output_counts_pk_std": 0.8671060526801396,
+            "gain_counts_per_mv": 1.3437301068752832,
+            "gain_db_nominal": 0.6893207949196957,
+            "thd_pct": 7.28550156060722,
+            "residual_rms_counts": 4.038890034123862,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "generator_vpp": 1.0,
+            "tap": 100,
+            "raw": "sine_60000.csv"
+          }
+        ],
+        "low_corner_hz": null,
+        "high_corner_hz": 5115.025157843326,
+        "peak_gain_counts_per_mv": 93.28445226504235,
+        "peak_freq_hz": 1000.0
+      },
+      "run_at": "2026-10-14T13:05:34"
+    },
+    "noise": {
+      "conditions": {
+        "pings": 60
+      },
+      "result": {
+        "pings": 60,
+        "rms_counts": 3.4492217090556077,
+        "rms_counts_band_2k_6k": 1.0149404518363603,
+        "ping_locked_rms_counts": 0.5880438759847263,
+        "dc_counts": 1808.7379801432292,
+        "floor_asd_counts_per_rthz": 0.015734446001809194,
+        "spurs": [
+          {
+            "hz": 7568.359374999999,
+            "asd_counts_per_rthz": 0.03719579479478867
+          }
+        ],
+        "input_referred_uv_rms": 36.97531180496814
+      },
+      "run_at": "2026-10-14T13:05:34"
+    },
+    "crosstalk": {
+      "conditions": {
+        "pings": 60,
+        "floor_from_T0": true
+      },
+      "result": {
+        "pings": 60,
+        "rms_counts": 14.452283612366564,
+        "rms_counts_below_300hz": 14.396467841775937,
+        "rms_counts_in_band": 0.34441279008752174,
+        "band_hz": [
+          2000,
+          6000
+        ],
+        "floor_counts_rms_in_band": 1.0149404518363603,
+        "in_band_below_floor_after_ms": 2.671,
+        "first_sample_ms_after_burst": 2.671
+      },
+      "run_at": "2026-10-14T13:09:08"
+    }
+  },
+  "updated": "2026-10-14T13:09:08",
+  "git_commit": "ec8d977"
+}

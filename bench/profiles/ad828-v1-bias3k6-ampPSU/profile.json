@@ -1,0 +1,32 @@
+{
+  "name": "ad828-v1-bias3k6-ampPSU",
+  "created": "2026-10-14T14:13:13",
+  "hardware": {
+    "description": "Same as ad828-v1-bias3k6 (3.6k bias on node, pad lifted, no mic, amp input connected) but speaker amp now on its own 5V/850mA supply instead of ESP32 VIN"
+  },
+  "setup": {},
+  "tests": {
+    "crosstalk": {
+      "conditions": {
+        "pings": 60,
+        "floor_from_T0": false
+      },
+      "result": {
+        "pings": 60,
+        "rms_counts": 23.741914873385344,
+        "rms_counts_below_300hz": 11.898219541718262,
+        "rms_counts_in_band": 14.98359442524753,
+        "band_hz": [
+          2000,
+          6000
+        ],
+        "floor_counts_rms_in_band": 25.971841997275604,
+        "in_band_below_floor_after_ms": 2.671,
+        "first_sample_ms_after_burst": 2.671
+      },
+      "run_at": "2026-10-14T14:13:35"
+    }
+  },
+  "updated": "2026-10-14T14:13:35",
+  "git_commit": "ec8d977"
+}
