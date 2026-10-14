@@ -218,6 +218,18 @@ void capture_samples() {
     ESP_ERROR_CHECK(adc_continuous_stop(adc_handle));
 
     uint16_t valid_samples = adc_samples_collected;
+
+    // The original ESP32's ADC DMA delivers each pair of adjacent samples in
+    // swapped order (2k+1 before 2k). Left alone, every sample sits up to one
+    // sample period from its true time, alternating, which puts an image of
+    // any input tone at fs/2 - f with amplitude tan(2*pi*f/fs) relative to
+    // it (measured: exactly that, from 100 Hz to 15 kHz). Swap them back.
+    for (uint16_t i = 0; i + 1 < valid_samples; i += 2) {
+        int16_t t = data_buffer[i];
+        data_buffer[i] = data_buffer[i + 1];
+        data_buffer[i + 1] = t;
+    }
+
     repair_adc_glitches(valid_samples);
 
     // Pad any shortfall (e.g. from the timeout above) with zeros rather than
