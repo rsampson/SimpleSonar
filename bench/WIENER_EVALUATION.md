@@ -40,3 +40,31 @@ If it passes, bring only `pc/deconvolve.py` (+ tests, `--deconv` flags) over as 
 opt-in, default off, with parameters retuned to this hardware (about 3300-4400 Hz,
 Q 5-9, lambda 0.01-0.03) - not the branch's firmware, which conflicts with master's
 phase-locked burst, 300 ms interval and ADC pair-swap fix.
+
+## Two-target test (2026-10-14, boards at 77 in and 93 in, 40.6 cm apart)
+
+Flat wood boards side by side, squared to the transducers; runs none1, A+B, A,
+B, none2 back to back (`bench/two_target_eval.py`, raw captures not committed;
+plot in `profiles/two-target/two_target.png`). Background = mean of the two
+no-target runs (DC 1805.2 vs 1809.4: 4 counts of drift). An earlier attempt
+with unsquared boards and a failing amp supply showed no echoes and was discarded.
+
+Valley between the two echoes in the A+B capture (7 cm smoothing, relative to the
+lower peak):
+
+| method | valley depth | A peak | B peak |
+|---|---|---|---|
+| matched filter | 12.9 dB | 194 | 261 |
+| Wiener λ=0.003 | 20.9 dB | 191 | 246 |
+| Wiener λ=0.01 | 12.2 dB | 190 | 246 |
+| Wiener λ=0.03 | 9.4 dB | 189 | 246 |
+
+(true range 195.6 / 236.2 cm; A-alone and B-alone peaks: matched 196 / 252.)
+
+- At 40 cm, above the ~29 cm bandwidth limit, the plain matched filter already
+  separates the boards. Wiener at λ=0.01-0.03 is no better; λ=0.003 deepens the
+  valley but also adds spurious ripple peaks on the single-board runs.
+- So no advantage is shown at this separation. The sub-limit regime (15-25 cm)
+  is untested.
+- A+B is not A+B: the residual AB-(A+B) is as large as either board's echo
+  (RMS 68 vs 53/66), so shadowing, multipath or drift contaminate the sum.
