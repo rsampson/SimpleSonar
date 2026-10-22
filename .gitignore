@@ -18,3 +18,6 @@ pc/sensor_stream.csv
 
 # Bench raw captures (large; kept locally, profile.json/report/plots are committed)
 bench/profiles/*/raw/
+
+# Claude Code personal settings (permission rules)
+.claude/settings.local.json

@@ -31,8 +31,8 @@ SONAR_BAND_HZ = (35000, 45000)
 def load_capture(path):
     """Return (metas, x, fs_hz, t0_ms) for a capture CSV.
 
-    x is float (n_pings, n_samples). Packets with out-of-range samples (the
-    occasional corrupted packet at the start of a run) are dropped. t0_ms is
+    x is float (n_pings, n_samples). Packets with out-of-range samples (a
+    corrupted packet, e.g. from a serial byte drop) are dropped. t0_ms is
     the time of the first sample after the burst start.
     """
     packets = load_packets(path)
@@ -281,11 +281,13 @@ def analyze_sine(x, fs_hz, f_true_hz, amp_mv_pk, n_harmonics=5):
     f_obs_nom = fold_frequency(f_true_hz, fs_hz)
     f_obs = estimate_frequency(res, fs_hz, f_hint=f_obs_nom)
     sep = 3 * fs_hz / res.shape[1]
+    # The generator's dial is only approximately right: scale its frequency
+    # by observed/nominal so harmonics are placed where they really land.
+    # That ratio is only meaningful when the fundamental isn't aliased.
+    f_scale = f_obs / f_obs_nom if f_true_hz <= fs_hz / 2 else 1.0
     hf = []
     for k in range(2, n_harmonics + 1):
-        # where harmonic k lands, relative to the observed fundamental (the
-        # generator's nominal frequency is only approximately right)
-        fk = fold_frequency(k * f_true_hz * f_obs / f_obs_nom if not f_true_hz > fs_hz / 2 else k * f_true_hz, fs_hz)
+        fk = fold_frequency(k * f_true_hz * f_scale, fs_hz)
         if fk < 50 or abs(fk - f_obs) < sep or any(abs(fk - g) < sep for g in hf):
             continue            # lands on DC, the fundamental or another harmonic: not separable
         hf.append(fk)
@@ -312,6 +314,15 @@ def analyze_sine(x, fs_hz, f_true_hz, amp_mv_pk, n_harmonics=5):
 
 # --- T4: crosstalk ----------------------------------------------------------------
 
+def _settles_after_ms(t_ms, above):
+    """Time after which the envelope stays below the floor: the first sample
+    if it never exceeds it, None if it still exceeds it at the record's end."""
+    if not len(above):
+        return float(t_ms[0])
+    first_quiet = above[-1] + 1
+    return float(t_ms[first_quiet]) if first_quiet < len(t_ms) else None
+
+
 def analyze_crosstalk(x, fs_hz, t0_ms, noise_band_rms=None, band=SONAR_BAND_HZ):
     """Ping-locked (burst-synchronous) signal with the input terminated.
 
@@ -334,7 +345,7 @@ def analyze_crosstalk(x, fs_hz, t0_ms, noise_band_rms=None, band=SONAR_BAND_HZ):
         'rms_counts_in_band': band_rms(m, fs_hz, *band),
         'band_hz': list(band),
         'floor_counts_rms_in_band': floor,
-        'in_band_below_floor_after_ms': float(t_ms[above[-1] + 1]) if len(above) and above[-1] + 1 < len(t_ms) else (float(t_ms[0]) if not len(above) else None),
+        'in_band_below_floor_after_ms': _settles_after_ms(t_ms, above),
         'first_sample_ms_after_burst': float(t0_ms),
         '_arrays': {'xtalk_t_ms': t_ms, 'xtalk_mean': m, 'xtalk_env': env_s},
     }

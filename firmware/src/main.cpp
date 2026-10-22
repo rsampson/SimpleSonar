@@ -128,56 +128,6 @@ void init_adc_continuous() {
     ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(adc_handle, &cbs, NULL));
 }
 
-// The original ESP32's ADC digital/DMA controller re-triggers conversions in
-// fixed-size hardware bursts (it can't free-run continuously like later
-// chips), and each burst restart can emit a handful of stale/zero readings
-// before real conversions resume. At ADC_SAMPLE_FREQ_HZ these show up as
-// short runs of exact-zero samples (empirically a few samples long,
-// recurring every few dozen samples) - a driver artifact, not real signal:
-// a live analog waveform essentially never lands on exactly zero twice in a
-// row. Linearly interpolate across each run using its real neighbors rather
-// than sending the driver's zeros as if they were measurements.
-#define ADC_GLITCH_MAX_RUN 16 // generous upper bound on a burst-restart run
-void repair_adc_glitches(uint16_t count) {
-    uint16_t i = 0;
-    while (i < count) {
-        if (data_buffer[i] != 0) {
-            i++;
-            continue;
-        }
-        uint16_t run_start = i;
-        uint16_t run_end = i; // exclusive
-        while (run_end < count && data_buffer[run_end] == 0 && (run_end - run_start) < ADC_GLITCH_MAX_RUN) {
-            run_end++;
-        }
-
-        int16_t before = (run_start > 0) ? data_buffer[run_start - 1] : 0;
-        int16_t after = (run_end < count) ? data_buffer[run_end] : 0;
-        bool have_before = run_start > 0;
-        bool have_after = run_end < count;
-
-        if (!have_before && !have_after) {
-            // Whole buffer is zero - nothing sensible to interpolate from.
-        } else if (!have_before) {
-            for (uint16_t j = run_start; j < run_end; j++) {
-                data_buffer[j] = after;
-            }
-        } else if (!have_after) {
-            for (uint16_t j = run_start; j < run_end; j++) {
-                data_buffer[j] = before;
-            }
-        } else {
-            uint16_t span = run_end - run_start + 1; // steps from before to after
-            for (uint16_t j = run_start; j < run_end; j++) {
-                uint16_t step = j - run_start + 1;
-                data_buffer[j] = (int16_t)(before + ((int32_t)(after - before) * step) / span);
-            }
-        }
-
-        i = run_end;
-    }
-}
-
 // Blocks until BUFFER_SIZE samples have been captured into data_buffer at
 // ADC_SAMPLE_FREQ_HZ. Starts/stops the continuous driver around each burst
 // (rather than free-running continuously) so pinging can be gated by
@@ -235,7 +185,11 @@ void capture_samples() {
         data_buffer[i + 1] = t;
     }
 
-    repair_adc_glitches(valid_samples);
+    // At 100 kHz the ADC DMA emitted short runs of exact-zero samples at each
+    // hardware burst restart, which repair_adc_glitches() interpolated over
+    // (removed after commit 345fd9b). At 200 kHz none occur (0 in 96 pings
+    // measured raw), and the repair would mask real clipping at 0 V, so
+    // samples are sent as converted. Restore it if the rate goes back down.
 
     // Pad any shortfall (e.g. from the timeout above) with zeros rather than
     // sending stale data from a previous ping.

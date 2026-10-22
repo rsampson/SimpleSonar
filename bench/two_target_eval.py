@@ -1,5 +1,7 @@
 """Can the matched filter / Wiener deconvolution separate two targets?
 
+Historical: 3.3 kHz-era captures and constants, like wiener_eval.py.
+
 Needs bench/profiles/two-target/raw/{none1,none2,A_sq,B_sq,AB_sq}.csv (gitignored).
 Targets A=77 in and B=93 in (40.6 cm apart in range), side by side. Each
 capture has the back-to-back no-target mean subtracted; the envelope is then

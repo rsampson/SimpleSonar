@@ -80,7 +80,7 @@ Key tunables are at the top of the file: `PING_FREQUENCY` (40000 Hz), `PING_CYCL
 
 1. `emit_burst()` drives a single-ended square wave on `PING_PIN` (GPIO25) via one LEDC PWM channel, gated on for `PING_CYCLES` cycles. GPIO26 (`UNUSED_PIN`) is left as a high-impedance input. The LEDC timer is reset before each burst so every ping is phase-locked to the ADC window, which allows coherent averaging and background subtraction. The function returns the true burst-start time (`t_ping_us`). The receive element is on `ANALOG_PIN` (GPIO34).
 2. After `AFTER_DELAY_US`, `capture_samples()` reads `BUFFER_SIZE` (4096) samples at a hardware-clocked `ADC_SAMPLE_FREQ_HZ` (200 kHz; `BUFFER_SIZE` must match `NUM_SAMPLES` in `receive.py`). Don't use `analogRead()`: it is software-timed and jittery.
-3. `capture_samples()` un-swaps each adjacent sample pair (the original ESP32's ADC DMA delivers them swapped; captures from before 2026-10-14 still have the swap). `repair_adc_glitches()` then interpolates across the short runs of spurious exact-zero samples the ADC emits at each hardware burst restart.
+3. `capture_samples()` un-swaps each adjacent sample pair (the original ESP32's ADC DMA delivers them swapped; captures from before 2026-10-14 still have the swap). The exact-zero glitch runs the ADC emitted at 100 kHz don't occur at 200 kHz, so their repair was removed; a 0 in the data is a real reading (clipping).
 4. `send_data()` writes the header and raw `int16_t` payload to `Serial`.
 
 The burst length, not transducer ringing, sets range resolution. Use an echo's **leading edge**, not its envelope peak, as the range marker (`bench/direct_path.py`, `bench/echo_onset.py`).

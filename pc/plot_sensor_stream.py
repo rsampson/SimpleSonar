@@ -14,7 +14,7 @@ def range_axis_cm(meta, n_samples):
     """One-way range (cm) of each sample, measured from the start of the burst.
 
     Sampling doesn't begin until `T_sample_us - T_ping_us` after the burst
-    starts (burst duration + settle delay + overheads, ~2.8 ms / ~48 cm in
+    starts (burst duration + settle delay + overheads, ~1.24 ms / ~21 cm in
     the current firmware), so sample i is `offset + i * dt` after the ping,
     not `i * dt`.
     """
@@ -23,6 +23,15 @@ def range_axis_cm(meta, n_samples):
 
 
 META_COLUMNS = ['Timestamp', 'PingID', 'T_ping_us', 'T_sample_us', 'NumSamples', 'SampleDt_us']
+
+
+def parse_row(row):
+    """(meta, values) for one sensor_stream.csv data row."""
+    meta = dict(zip(META_COLUMNS, row[:len(META_COLUMNS)]))
+    for key in ('PingID', 'T_ping_us', 'T_sample_us', 'NumSamples', 'SampleDt_us'):
+        meta[key] = int(meta[key])
+    values = [int(v) for v in row[len(META_COLUMNS):]]
+    return meta, values
 
 
 def load_packets(path):
@@ -34,14 +43,7 @@ def load_packets(path):
                 f"{path} does not match the expected header format {META_COLUMNS}; "
                 "re-record with the current receive.py."
             )
-        packets = []
-        for row in reader:
-            meta = dict(zip(META_COLUMNS, row[:len(META_COLUMNS)]))
-            for key in ('PingID', 'T_ping_us', 'T_sample_us', 'NumSamples', 'SampleDt_us'):
-                meta[key] = int(meta[key])
-            values = [int(v) for v in row[len(META_COLUMNS):]]
-            packets.append((meta, values))
-    return packets
+        return [parse_row(row) for row in reader]
 
 
 def main():
@@ -55,18 +57,16 @@ def main():
 
     fig, ax = plt.subplots(figsize=(10, 5))
     meta, values = packets[0]
-    sample_dt_us = meta['SampleDt_us']
     range_cm = range_axis_cm(meta, n_samples)
     line, = ax.plot(range_cm, values)
     ax.set_xlim(range_cm[0], range_cm[-1])
-    ax.set_ylim(0, 4096)  # full int16 range with headroom
+    ax.set_ylim(0, 4096)  # full 12-bit ADC range
     ax.set_xlabel("Range (cm)")
     ax.set_ylabel("Amplitude")
 
     def render():
         idx = state['idx']
         meta, values = packets[idx]
-        sample_dt_us = meta['SampleDt_us']
         range_cm = range_axis_cm(meta, len(values))
         line.set_xdata(range_cm)
         line.set_ydata(values)

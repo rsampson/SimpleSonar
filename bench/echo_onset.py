@@ -27,6 +27,9 @@ C = 331.3 + 0.606 * 23.9
 
 def onset(t, e, expected_ms, k):
     pre = (t > expected_ms - 5.0) & (t < expected_ms - 0.8)
+    if pre.sum() < 20:
+        raise ValueError(f"too little pre-echo data ({pre.sum()} samples) before the expected "
+                         f"{expected_ms:.2f} ms echo: sampling starts at {t[0]:.2f} ms; target too close")
     ref = e[pre]
     thr = np.median(ref) + k * ref.std()
     idx = np.where((t > expected_ms - 1.3) & (e > thr))[0]

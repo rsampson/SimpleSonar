@@ -213,12 +213,12 @@ def _drain_until_quiet(ser, quiet_s=0.3, max_wait_s=2.0):
     reset_input_buffer() right after STOP can therefore still leave the tail
     of that in-flight packet to arrive afterward with no sync bytes ahead of
     it (already consumed by the reset), which can collide with the next
-    START's first packet and desync framing. This reduces how often that
-    happens but hasn't been observed to eliminate it entirely (root cause
-    not fully pinned down) - the main read loop's own resync-on-next-0xAA0xBB
-    logic is what makes any remaining occurrence harmless: it's detected,
-    logged as a ping_id-gap warning, and recovered from automatically rather
-    than corrupting the CSV.
+    START's first packet and desync framing. (The corrupted first packets
+    once blamed partly on this turned out to be buffer overflow from a
+    pause between START and reading; see continuous_serial_to_csv().) The
+    main read loop's resync-on-next-0xAA0xBB logic covers any remaining
+    occurrence: it's detected, logged as a ping_id-gap warning, and
+    recovered from rather than corrupting the CSV.
     """
     original_timeout = ser.timeout
     ser.timeout = quiet_s

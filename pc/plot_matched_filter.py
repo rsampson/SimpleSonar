@@ -16,17 +16,18 @@ SPEED_OF_SOUND_M_S = 331.3 + 0.606 * 23.9
 US_TO_CM = (SPEED_OF_SOUND_M_S * 100 / 1e6) / 2  # one-way range per microsecond of time-of-flight
 
 
-def make_ping_template(sample_dt_us):
+def make_ping_template(sample_dt_us, freq_hz=PING_FREQUENCY_HZ, cycles=PING_CYCLES):
     """Reconstruct the transmitted burst as sampled at the receiver's rate.
 
-    The firmware drives PING_PIN_A/B as a free-running LEDC square wave
-    (~50% duty) for PING_CYCLES at PING_FREQUENCY_HZ, gated on for exactly
-    that many cycles and off otherwise. That gated square wave, not an
+    The firmware drives PING_PIN as a free-running LEDC square wave (~50%
+    duty) for PING_CYCLES at PING_FREQUENCY_HZ, gated on for exactly that
+    many cycles and off otherwise. freq_hz/cycles override those for
+    captures made with an older burst. That gated square wave, not an
     idealized sinusoid, is the actual matched-filter reference: it is what
     left the transducer electrically before the channel and transducer
     bandlimited it on the way back.
     """
-    burst_duration_s = PING_CYCLES / PING_FREQUENCY_HZ
+    burst_duration_s = cycles / freq_hz
     dt_s = sample_dt_us * 1e-6
     n = max(int(round(burst_duration_s / dt_s)), 1)
     # Half-cycle index of each sample in exact integer arithmetic. When the
@@ -34,7 +35,7 @@ def make_ping_template(sample_dt_us):
     # 200 kHz) samples land exactly on edges, where sign(sin()) flips at
     # random on floating-point rounding; this puts each edge sample in the
     # half-cycle it starts, as the LEDC output does.
-    half_cycle = (np.arange(n) * round(sample_dt_us) * 2 * PING_FREQUENCY_HZ) // 1_000_000
+    half_cycle = (np.arange(n) * round(sample_dt_us) * 2 * round(freq_hz)) // 1_000_000
     template = np.where(half_cycle % 2 == 0, 1.0, -1.0)
     # Zero-mean so correlation isn't biased by the reference's DC content.
     return template - template.mean()

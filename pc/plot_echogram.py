@@ -78,10 +78,9 @@ def build_echogram(packets, background=None):
     columns = []
     ping_times = []
     for meta, values in packets:
-        tmpl = make_ping_template(meta['SampleDt_us'])
         if background is not None:
             values = np.asarray(values, dtype=float) - background
-        mf = matched_filter(values, tmpl)
+        mf = matched_filter(values, template)
         env = hilbert_envelope(mf)
         env[:blank_samples] = np.nan
         columns.append(env)

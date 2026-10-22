@@ -3,7 +3,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plot_sensor_stream import META_COLUMNS, range_axis_cm
+from plot_sensor_stream import META_COLUMNS, parse_row, range_axis_cm
 from plot_matched_filter import make_ping_template, matched_filter, US_TO_CM
 from plot_echogram import hilbert_envelope
 
@@ -101,14 +101,7 @@ def tail_new_packets(path, state):
         state['header_seen'] = True
         lines = lines[1:]
 
-    packets = []
-    for row in csv.reader(lines):
-        meta = dict(zip(META_COLUMNS, row[:len(META_COLUMNS)]))
-        for key in ('PingID', 'T_ping_us', 'T_sample_us', 'NumSamples', 'SampleDt_us'):
-            meta[key] = int(meta[key])
-        values = [int(v) for v in row[len(META_COLUMNS):]]
-        packets.append((meta, values))
-    return packets
+    return [parse_row(row) for row in csv.reader(lines)]
 
 
 def process_new_packets(new_packets, live_state):
@@ -129,8 +122,7 @@ def process_new_packets(new_packets, live_state):
             live_state['blank_cm'] = blank_cm
             live_state['blank_samples'] = int(np.count_nonzero(live_state['range_cm'] < blank_cm))
 
-        tmpl = make_ping_template(meta['SampleDt_us'])
-        mf = matched_filter(values, tmpl)
+        mf = matched_filter(values, live_state['template'])
         env = hilbert_envelope(mf)
         env[:live_state['blank_samples']] = np.nan
 

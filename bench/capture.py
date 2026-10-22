@@ -30,9 +30,9 @@ def open_sonar():
 def capture(ser, n_pings, out_path, skip=2, timeout_s=None, log=print):
     """Record n_pings valid packets to out_path; returns the number written.
 
-    The first `skip` packets after START are discarded: the first packet of
-    a run is occasionally corrupted (see CLAUDE.md), and dropping a couple
-    costs well under a second.
+    The first `skip` packets after START are discarded as a safeguard
+    against start-up glitches (a pause before reading used to corrupt the
+    first packet, see CLAUDE.md); dropping a couple costs under a second.
     """
     if timeout_s is None:
         timeout_s = 10 + n_pings * 1.0

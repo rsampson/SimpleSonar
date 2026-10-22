@@ -34,6 +34,9 @@ SPEED_OF_SOUND_M_S = 331.3 + 0.606 * 23.9
 def first_arrival_ms(t_ms, w, expected_ms, sigma=8.0):
     """First time the coherent mean leaves its pre-arrival level by `sigma` std."""
     pre = (t_ms > expected_ms - 1.8) & (t_ms < expected_ms - 0.3)
+    if pre.sum() < 20:
+        raise ValueError(f"too little pre-arrival data ({pre.sum()} samples) before the expected "
+                         f"{expected_ms:.2f} ms arrival: sampling starts at {t_ms[0]:.2f} ms; move further away")
     base, s = w[pre].mean(), w[pre].std()
     idx = np.where((t_ms > expected_ms - 0.4) & (np.abs(w - base) > sigma * s))[0]
     return float(t_ms[idx[0]]) if len(idx) else None

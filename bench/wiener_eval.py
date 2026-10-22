@@ -1,5 +1,9 @@
 """Compare the Wiener-deconvolution branch against the plain matched filter.
 
+Historical: a reproducible record of an evaluation on 3.3 kHz-era captures
+(2048 samples at 100 kHz, 6-cycle 3300 Hz burst). Its constants are those
+captures', not the current 40 kHz system's; don't update them.
+
 Needs the local captures bench/profiles/echo-77in/raw/target.csv and
 echo-100in/raw/{target,none}.csv (raw captures are gitignored) and the branch
 origin/add-wiener-deconvolution (its pc/deconvolve.py is read with `git show`,
@@ -45,7 +49,7 @@ def load_branch_deconvolve():
 
 
 dc = load_branch_deconvolve()
-TPL = make_ping_template(10)
+TPL = make_ping_template(10, freq_hz=3300, cycles=6)  # the captures' burst
 
 
 def capture(path):
