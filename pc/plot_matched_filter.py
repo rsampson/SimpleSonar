@@ -29,9 +29,13 @@ def make_ping_template(sample_dt_us):
     burst_duration_s = PING_CYCLES / PING_FREQUENCY_HZ
     dt_s = sample_dt_us * 1e-6
     n = max(int(round(burst_duration_s / dt_s)), 1)
-    t = np.arange(n) * dt_s
-    template = np.sign(np.sin(2 * np.pi * PING_FREQUENCY_HZ * t))
-    template[template == 0] = 1.0
+    # Half-cycle index of each sample in exact integer arithmetic. When the
+    # sample rate is a multiple of the tone (5 samples/cycle at 40 kHz /
+    # 200 kHz) samples land exactly on edges, where sign(sin()) flips at
+    # random on floating-point rounding; this puts each edge sample in the
+    # half-cycle it starts, as the LEDC output does.
+    half_cycle = (np.arange(n) * round(sample_dt_us) * 2 * PING_FREQUENCY_HZ) // 1_000_000
+    template = np.where(half_cycle % 2 == 0, 1.0, -1.0)
     # Zero-mean so correlation isn't biased by the reference's DC content.
     return template - template.mean()
 

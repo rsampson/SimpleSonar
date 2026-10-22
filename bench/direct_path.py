@@ -43,7 +43,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('profile_dir', help='directory holding raw/direct.csv')
     ap.add_argument('--distance-m', type=float, required=True)
-    ap.add_argument('--band', type=float, nargs=2, default=[1500, 6000])
+    ap.add_argument('--band', type=float, nargs=2, default=list(analyze.SONAR_BAND_HZ))
     args = ap.parse_args()
 
     d = args.profile_dir

@@ -38,7 +38,7 @@ def main():
     ap.add_argument('target_csv')
     ap.add_argument('--distance-m', type=float, required=True, help='one-way distance to the target')
     ap.add_argument('--none', help='optional no-target capture to subtract (coherent means)')
-    ap.add_argument('--band', type=float, nargs=2, default=[1500, 6000])
+    ap.add_argument('--band', type=float, nargs=2, default=list(analyze.SONAR_BAND_HZ))
     args = ap.parse_args()
 
     _, x, fs, t0 = analyze.load_capture(args.target_csv)

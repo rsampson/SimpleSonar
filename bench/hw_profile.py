@@ -87,8 +87,11 @@ def render_report(name):
 
     if 'noise' in tests:
         r = tests['noise']['result']
+        # profiles from before the 40 kHz conversion stored a fixed 2-6 kHz band
+        lo, hi = r.get('band_hz', [2000, 6000])
+        in_band = r.get('rms_counts_in_band', r.get('rms_counts_band_2k_6k'))
         lines += ['## T0 Noise (input terminated)', '',
-                  f"- Per-ping noise: {_fmt(r['rms_counts'])} counts RMS ({_fmt(r['rms_counts_band_2k_6k'])} in 2-6 kHz)",
+                  f"- Per-ping noise: {_fmt(r['rms_counts'])} counts RMS ({_fmt(in_band)} in {lo / 1e3:g}-{hi / 1e3:g} kHz)",
                   f"- Ping-locked (burst-synchronous) signal: {_fmt(r['ping_locked_rms_counts'])} counts RMS",
                   f"- Floor: {_fmt(r['floor_asd_counts_per_rthz'])} counts/√Hz; DC {_fmt(r['dc_counts'], 5)} counts"]
         if r.get('input_referred_uv_rms') is not None:

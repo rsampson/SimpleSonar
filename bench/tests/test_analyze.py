@@ -117,7 +117,7 @@ def test_clipping_is_detected():
 def test_crosstalk_reports_ping_locked_signal():
     rng = np.random.default_rng(6)
     x = np.round(np.array([BIAS + crosstalk_waveform() + rng.normal(0, NOISE, N) for _ in range(60)]))
-    r = analyze.analyze_crosstalk(x, FS, t0_ms=2.7)
+    r = analyze.analyze_crosstalk(x, FS, t0_ms=2.7, band=(2000, 6000))  # synthetic 3.3 kHz crosstalk
     assert r['rms_counts'] == pytest.approx(crosstalk_waveform().std(), rel=0.05)
     assert r['rms_counts_below_300hz'] > r['rms_counts_in_band']
     # the 3.3 kHz component decays with a 0.4 ms time constant from 60 counts

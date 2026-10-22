@@ -45,6 +45,10 @@ int16_t data_buffer[BUFFER_SIZE];
 // 200 kHz gives 5 samples per 40 kHz cycle, puts Nyquist well above the
 // preamp's ~61 kHz poles, and keeps sample_dt_us an exact integer (5 us).
 #define ADC_SAMPLE_FREQ_HZ 200000 // 200 kHz continuous-mode sample rate
+// sample_dt_us (header) and emit_burst()'s periodUs are whole microseconds;
+// a rate that doesn't divide 1 MHz would silently skew every range axis.
+static_assert(1000000 % ADC_SAMPLE_FREQ_HZ == 0, "ADC_SAMPLE_FREQ_HZ must give a whole-us sample period");
+static_assert(1000000 % PING_FREQUENCY == 0, "PING_FREQUENCY must give a whole-us period");
 // Bytes per ADC continuous-mode DMA frame (must be a multiple of
 // SOC_ADC_DIGI_RESULT_BYTES, 4 on ESP32). Kept well under the ~4092 byte
 // single-descriptor ceiling used elsewhere in the Arduino core's ADC
@@ -76,7 +80,7 @@ String serial_command_buffer;
 
 adc_continuous_handle_t adc_handle = NULL;
 static SemaphoreHandle_t adc_frame_sem = NULL;
-volatile uint16_t adc_samples_collected = 0;
+uint16_t adc_samples_collected = 0;
 static adc_channel_t adc_target_channel;
 
 static bool IRAM_ATTR adc_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data) {

@@ -4,7 +4,7 @@
     python bench/run_test.py --profile NAME noise
     python bench/run_test.py --profile NAME step  --vpp 5.0
     python bench/run_test.py --profile NAME sine  --vpp 5.0
-    python bench/run_test.py --profile NAME linearity --freq 3300
+    python bench/run_test.py --profile NAME linearity --freq 40000
     python bench/run_test.py --profile NAME crosstalk
     python bench/run_test.py --profile NAME reanalyze   # rerun analysis from raw/ captures
     python bench/run_test.py --profile NAME report
@@ -23,7 +23,7 @@ import hw_profile  # noqa: E402
 DEFAULT_SINE_FREQS = [100, 200, 500, 1000, 2000, 2500, 3000, 3300, 3600, 4000, 4400, 5000, 6000,
                       7000, 8000, 10000, 15000, 20000, 30000, 40000, 45000,
                       55000, 60000, 70000, 90000, 150000]
-GAIN_REF_HZ = 1000
+GAIN_REF_HZ = 40000  # the sonar's operating frequency
 SUGGESTED_VPP = {100: '~1 V', 1000: '~5-10 V'}   # gives ~10 mV p-p at the node
 
 
@@ -99,7 +99,8 @@ def run_noise(args, prof, sess, reanalyze=False):
     g = gain_at(prof, GAIN_REF_HZ)
     r['input_referred_uv_rms'] = r['rms_counts'] / g * 1000 if g else None
     hw_profile.store_result(args.profile, prof, 'noise', r, {'pings': int(len(x))})
-    print(f"  noise {r['rms_counts']:.2f} counts RMS ({r['rms_counts_band_2k_6k']:.2f} in 2-6 kHz); "
+    lo, hi = r['band_hz']
+    print(f"  noise {r['rms_counts']:.2f} counts RMS ({r['rms_counts_in_band']:.2f} in {lo / 1e3:g}-{hi / 1e3:g} kHz); "
           f"ping-locked {r['ping_locked_rms_counts']:.1f} counts RMS")
 
 
@@ -176,7 +177,7 @@ def run_sine(args, prof, sess, reanalyze=False):
 
 def run_linearity(args, prof, sess, reanalyze=False):
     old = prof['tests'].get('linearity', {}).get('result', {}).get('points', [])
-    f = args.freq or 3300
+    f = args.freq or 40000
     if reanalyze:
         pts = [_sine_point(args, prof, sess, p['f_generator_hz'], p['generator_vpp'], p['tap'],
                            os.path.join(hw_profile.profile_dir(args.profile), 'raw', p['raw']), True) for p in old]
@@ -210,7 +211,9 @@ def run_crosstalk(args, prof, sess, reanalyze=False):
         ask("Press Enter to capture...")
         sess.capture(args.pings, path)
     _, x, fs, t0 = analyze.load_capture(path)
-    floor = prof['tests'].get('noise', {}).get('result', {}).get('rms_counts_band_2k_6k')
+    # T0's in-band noise is only a valid floor if it was measured in the same band
+    noise = prof['tests'].get('noise', {}).get('result', {})
+    floor = noise.get('rms_counts_in_band') if noise.get('band_hz') == list(analyze.SONAR_BAND_HZ) else None
     r = analyze.analyze_crosstalk(x, fs, t0, noise_band_rms=floor)
     hw_profile.store_result(args.profile, prof, 'crosstalk', r, {'pings': int(len(x)), 'floor_from_T0': floor is not None})
     print(f"  ping-locked {r['rms_counts']:.1f} counts RMS ({r['rms_counts_below_300hz']:.1f} <300 Hz, "

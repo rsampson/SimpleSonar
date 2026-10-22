@@ -22,6 +22,8 @@ START_COMMAND = b'START\n'
 STOP_COMMAND = b'STOP\n'
 
 NUM_SAMPLES = 4096  # must match BUFFER_SIZE in firmware
+CSV_HEADER = ['Timestamp', 'PingID', 'T_ping_us', 'T_sample_us', 'NumSamples', 'SampleDt_us'] + \
+             [f"Int_{i}" for i in range(NUM_SAMPLES)]
 PAYLOAD_BYTES = NUM_SAMPLES * 2  # int16_t per sample
 
 # PingHeader layout (matches the packed struct in firmware src/main.cpp),
@@ -333,7 +335,31 @@ def _install_interrupt_handler():
     signal.signal(signal.SIGTERM, handler)
 
 
+class CsvLayoutError(ValueError):
+    pass
+
+
+def needs_header(path, fresh):
+    """True if `path` must be started with a header row; False to append.
+
+    Refuses (CsvLayoutError) to append to a CSV whose header doesn't match
+    CSV_HEADER, e.g. one recorded with a different NUM_SAMPLES: mixed row
+    lengths would break every plot script that loads it.
+    """
+    if fresh or not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return True
+    with open(path, newline='') as f:
+        existing = next(csv.reader(f), [])
+    if existing != CSV_HEADER:
+        raise CsvLayoutError(
+            f"{path} has a different column layout ({max(len(existing) - 6, 0)} samples/row, "
+            f"expected {NUM_SAMPLES}); rerun with --fresh or move it aside.")
+    return False
+
+
 def continuous_serial_to_csv(fresh=False):
+    # Checked before the port is opened, which resets the ESP32.
+    write_header = needs_header(OUTPUT_FILE, fresh)
     _install_interrupt_handler()
 
     if SERIAL_PORT:
@@ -355,19 +381,15 @@ def continuous_serial_to_csv(fresh=False):
         port, ser = find_sonar_port()
         print(f"Connected to {port} at {BAUD_RATE} baud.")
 
-    file_exists = os.path.isfile(OUTPUT_FILE) and not fresh
-    write_mode = 'w' if fresh else 'a'
+    write_mode = 'w' if write_header else 'a'
 
     try:
         # Using line-buffered output (buffering=1) so data writes to your disk instantly every second
         with open(OUTPUT_FILE, mode=write_mode, newline='', buffering=1) as f:
             writer = csv.writer(f)
 
-            # Write a header row for a new file
-            if not file_exists:
-                header = ['Timestamp', 'PingID', 'T_ping_us', 'T_sample_us', 'NumSamples', 'SampleDt_us'] + \
-                         [f"Int_{i}" for i in range(NUM_SAMPLES)]
-                writer.writerow(header)
+            if write_header:
+                writer.writerow(CSV_HEADER)
 
             # Sent here, immediately before the read loop, rather than
             # earlier during setup - any delay between START and the loop
@@ -430,4 +452,7 @@ if __name__ == "__main__":
         help=f"Erase {OUTPUT_FILE} and start a new file instead of appending to the existing one."
     )
     args = parser.parse_args()
-    continuous_serial_to_csv(fresh=args.fresh)
+    try:
+        continuous_serial_to_csv(fresh=args.fresh)
+    except CsvLayoutError as e:
+        raise SystemExit(f"Error: {e}")

@@ -21,6 +21,9 @@ from plot_echogram import hilbert_envelope  # noqa: E402
 ADC_MAX = 4095
 RAIL_MARGIN = 5          # counts from either rail treated as clipped
 ADC_LSB_MV = 3300 / 4096  # nominal; ESP32 ADC scale is only approximate
+# The sonar's working band: 40 kHz 40T/40R-12 transducers (+/-5 kHz covers
+# the datasheet response plots).
+SONAR_BAND_HZ = (35000, 45000)
 
 
 # --- loading ----------------------------------------------------------------
@@ -128,7 +131,7 @@ def corners_3db(freqs, mag):
 
 # --- T0: noise -----------------------------------------------------------------
 
-def analyze_noise(x, fs_hz, top_spurs=8):
+def analyze_noise(x, fs_hz, top_spurs=8, band=SONAR_BAND_HZ):
     """Noise floor with the input terminated."""
     locked, res = split_ping_locked(x)
     n = res.shape[1]
@@ -145,7 +148,8 @@ def analyze_noise(x, fs_hz, top_spurs=8):
     return {
         'pings': int(len(x)),
         'rms_counts': float(res.std()),
-        'rms_counts_band_2k_6k': float(np.mean([band_rms(r, fs_hz, 2000, 6000) for r in res])),
+        'rms_counts_in_band': float(np.mean([band_rms(r, fs_hz, *band) for r in res])),
+        'band_hz': list(band),
         'ping_locked_rms_counts': float((locked - locked.mean()).std()),
         'dc_counts': float(x.mean()),
         'floor_asd_counts_per_rthz': float(floor),
@@ -308,7 +312,7 @@ def analyze_sine(x, fs_hz, f_true_hz, amp_mv_pk, n_harmonics=5):
 
 # --- T4: crosstalk ----------------------------------------------------------------
 
-def analyze_crosstalk(x, fs_hz, t0_ms, noise_band_rms=None, band=(2000, 6000)):
+def analyze_crosstalk(x, fs_hz, t0_ms, noise_band_rms=None, band=SONAR_BAND_HZ):
     """Ping-locked (burst-synchronous) signal with the input terminated.
 
     noise_band_rms: in-band per-ping noise RMS from T0, used as the floor the
