@@ -44,7 +44,9 @@ def capture(ser, n_pings, out_path, skip=2, timeout_s=None, log=print):
         writer = csv.writer(f)
         writer.writerow(HEADER)
         ser.reset_input_buffer()
-        send_control_command(ser, receive.START_COMMAND)
+        # No settle sleep: the read loop must start draining before the
+        # first 8 KB packet overflows the tty/USB-serial buffers.
+        send_control_command(ser, receive.START_COMMAND, settle_s=0)
         deadline = time.monotonic() + timeout_s
         try:
             while written < n_pings:

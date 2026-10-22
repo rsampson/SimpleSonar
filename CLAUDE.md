@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An ESP32-based sonar front end and PC-side tooling for capturing and visualizing ping data over air:
 
-- **firmware/** — PlatformIO/Arduino project for the ESP32. Drives a speaker (through an audio amplifier) with a short tone burst, samples the microphone via the ESP-IDF ADC continuous/DMA driver, and streams framed ping packets over the flashing/debug UART.
+- **firmware/** — PlatformIO/Arduino project for the ESP32. Drives an 11-element 40 kHz piezo transmit array (40T-12, staggered ~25 mm spacing, through an audio amplifier) with a short tone burst, samples a single 40R-12 receive element via the ESP-IDF ADC continuous/DMA driver, and streams framed ping packets over the flashing/debug UART.
 - **pc/** — Python tools that receive, log, and visualize ping data.
 - **bench/** — characterization of the electronics alone (see below).
 - **hardware/** — KiCad designs: `sonar_preamp/` (older TL081 preamp, kept deliberately) and `sonar_amp.*` (separate board, untracked). Edit KiCad files only through the Konnect MCP tools.
@@ -54,7 +54,9 @@ With the mic removed, a bench generator drives the mic node through a ÷1000 (or
 
 ### Single shared UART
 
-Packets, debug text, and START/STOP commands share **one** `Serial` port at 921600 baud (`SERIAL_BAUD` in `firmware/src/main.cpp` must match `BAUD_RATE` in `pc/receive.py`). `receive.py` treats a leading `0xAA` byte as the start of a packet and anything else as a text line up to `\n`. **Firmware must never print text while a packet is being written** (see `send_data()`), or framing breaks.
+Packets, debug text, and START/STOP/TONE commands share **one** `Serial` port at 921600 baud (`SERIAL_BAUD` in `firmware/src/main.cpp` must match `BAUD_RATE` in `pc/receive.py`). `receive.py` treats a leading `0xAA` byte as the start of a packet and anything else as a text line up to `\n`. **Firmware must never print text while a packet is being written** (see `send_data()`), or framing breaks.
+
+`TONE` holds `PING_PIN` on as a continuous `PING_FREQUENCY` square wave (for scope debugging of the drive and receive chain) until STOP or START. The port must stay open while it runs, because reopening it resets the ESP32.
 
 ### Ping packet format
 
@@ -74,10 +76,10 @@ The packed `PingHeader` struct in `main.cpp` is mirrored by `HEADER_FORMAT`/`HEA
 
 ### Firmware signal path (`firmware/src/main.cpp`)
 
-Key tunables are at the top of the file: `PING_FREQUENCY` (3300 Hz), `PING_CYCLES` (6), `PING_INTERVAL_MS` (300), ADC settings, `SERIAL_BAUD`.
+Key tunables are at the top of the file: `PING_FREQUENCY` (40000 Hz), `PING_CYCLES` (10), `PING_INTERVAL_MS` (300), ADC settings, `SERIAL_BAUD`.
 
-1. `emit_burst()` drives a single-ended square wave on `PING_PIN` (GPIO25) via one LEDC PWM channel, gated on for `PING_CYCLES` cycles. GPIO26 (`UNUSED_PIN`) is left as a high-impedance input. The LEDC timer is reset before each burst so every ping is phase-locked to the ADC window, which allows coherent averaging and background subtraction. The function returns the true burst-start time (`t_ping_us`). The mic is on `ANALOG_PIN` (GPIO34).
-2. After `AFTER_DELAY_US`, `capture_samples()` reads `BUFFER_SIZE` (2048) samples at a hardware-clocked `ADC_SAMPLE_FREQ_HZ` (100 kHz). Don't use `analogRead()`: it is software-timed and jittery.
+1. `emit_burst()` drives a single-ended square wave on `PING_PIN` (GPIO25) via one LEDC PWM channel, gated on for `PING_CYCLES` cycles. GPIO26 (`UNUSED_PIN`) is left as a high-impedance input. The LEDC timer is reset before each burst so every ping is phase-locked to the ADC window, which allows coherent averaging and background subtraction. The function returns the true burst-start time (`t_ping_us`). The receive element is on `ANALOG_PIN` (GPIO34).
+2. After `AFTER_DELAY_US`, `capture_samples()` reads `BUFFER_SIZE` (4096) samples at a hardware-clocked `ADC_SAMPLE_FREQ_HZ` (200 kHz; `BUFFER_SIZE` must match `NUM_SAMPLES` in `receive.py`). Don't use `analogRead()`: it is software-timed and jittery.
 3. `capture_samples()` un-swaps each adjacent sample pair (the original ESP32's ADC DMA delivers them swapped; captures from before 2026-10-14 still have the swap). `repair_adc_glitches()` then interpolates across the short runs of spurious exact-zero samples the ADC emits at each hardware burst restart.
 4. `send_data()` writes the header and raw `int16_t` payload to `Serial`.
 
@@ -86,24 +88,25 @@ The burst length, not transducer ringing, sets range resolution. Use an echo's *
 ### PC receive path (`pc/receive.py`)
 
 - `SERIAL_PORT = None` auto-detects the port by sending START to each of `SERIAL_PORT_CANDIDATES` (`/dev/ttyUSB0`, `/dev/ttyUSB1`); set it to a path to skip detection.
+- The START that begins the read loop is sent with `settle_s=0` (also in `bench/capture.py`). With 8 KB packets, any pause before reading lets more than ~4.7 KB (tty buffer + USB-serial FIFO) pile up. That drops one byte, which misaligns the first packet's samples and destroys the next packet's sync.
 - A `BufferedReader` wraps the port, because reading one byte per syscall can't keep up at 921600 baud.
 - Framing and resync live in `parse_next_event()`, which is separate from the serial/CSV I/O so it can be unit-tested (`pc/tests/test_receive_parse.py`). On desync (e.g. an in-flight ping after STOP), it resyncs on the next `0xAA 0xBB` and logs a `ping_id` gap instead of writing corrupt rows.
 
 ### PC plotting scripts
 
-- `plot_sensor_stream.py` — raw waveform per packet. Its `range_axis_cm()` (used by every plot script) converts samples to one-way range from burst start using `SampleDt_us`, `SPEED_OF_SOUND_M_S`, and `T_sample_us - T_ping_us` (sampling starts ~2.8 ms / ~48 cm after the burst).
+- `plot_sensor_stream.py` — raw waveform per packet. Its `range_axis_cm()` (used by every plot script) converts samples to one-way range from burst start using `SampleDt_us`, `SPEED_OF_SOUND_M_S`, and `T_sample_us - T_ping_us` (sampling starts ~1.24 ms / ~21 cm after the burst).
 - `plot_matched_filter.py` — `make_ping_template()` rebuilds the actual transmitted burst and cross-correlates it with the signal. `PING_FREQUENCY_HZ`/`PING_CYCLES` here must match the firmware.
 - `plot_echogram.py` — matched-filter envelope (Hilbert) waterfall in dB, with near-range blanking. `--background NO_TARGET.csv` subtracts a no-target capture's mean waveform to cancel static clutter; record it back-to-back with the data, with nobody in the beam. The matched-filter band peaks ~20 cm beyond an echo's true leading edge.
-- `plot_echogram_live.py` — the same view, tailing `sensor_stream.csv` live (`WINDOW_PINGS` wide). It never touches the serial port.
+- `plot_echogram_live.py` — the same view, tailing `sensor_stream.csv` live (`WINDOW_PINGS` wide). Its dB scale is relative to the strongest return in the visible window, so a strong transient stops dimming the display once it scrolls off. It never touches the serial port.
 - `run_pipeline.py` — runs the three stages in sequence.
 
 ### Branches
 
-- `chirp-drive` — stepped-chirp drive, reverted for the old narrowband piezo. It might be worth retrying with the speaker.
+- `chirp-drive` — stepped-chirp drive, reverted for the old narrowband piezo. Unlikely to help the narrowband 40 kHz piezos.
 - `add-wiener-deconvolution` — PC-side Wiener deconvolution. It is unmerged, and its firmware conflicts with master. `bench/WIENER_EVALUATION.md` found no verified advantage over the matched filter, which already separates targets 40 cm apart.
 
 ## Working notes
 
 - **Supply isolation matters most in the analog front end.** Keep the speaker amp on its own supply, keep the preamp supply filtered (22 Ω + 100 µF + 0.1 µF at its pins), use a single-point ground, and re-run `bench/run_test.py ... crosstalk` after any wiring change.
-- The fitted preamp is an AD828 (profile `ad828-v1`): 93 counts/mV (37.5 dB), −3 dB band 75 Hz–5.1 kHz (3.2 kHz is −1.2 dB), ADC-limited noise floor of ~1 count RMS.
+- The fitted preamp is an AD828. Profile `ad828-v1` (93 counts/mV, 37.5 dB, −3 dB band 75 Hz–5.1 kHz, ~1 count RMS noise) predates the 40 kHz conversion: the feedback caps across the 20 kΩ resistors are now 130 pF (~61 kHz pole per stage, ~−3 dB at 40 kHz for both), and the electret bias network has been removed. The receive element is loaded directly by the 2.2 kΩ input resistor.
 - The hardware build is fragile. If the data looks physically implausible (noise, drift, gain, oscillation) but framing is clean (`ping_id` continuous, no resync warnings), suspect the hardware or wiring before the code.

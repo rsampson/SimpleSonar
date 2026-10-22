@@ -9,18 +9,18 @@ from plot_echogram import hilbert_envelope
 
 INPUT_FILE = 'sensor_stream.csv'
 
-# receive.py logs one ping roughly every 68ms (measured against a live
-# recording - 2048 samples / 100kHz ADC + burst + settle delay). Polling
-# well under that keeps pings from visibly batching up without any
-# meaningful CPU cost; revisit if firmware/src/main.cpp's timing changes.
+# receive.py logs one ping every PING_INTERVAL_MS (300ms) in
+# firmware/src/main.cpp. Polling well under that keeps pings from visibly
+# batching up without any meaningful CPU cost.
 POLL_INTERVAL_S = 0.05
 
 # Fixed-width scrolling window, like a real fish-finder, rather than an
 # ever-growing image - keeps redraw cost and memory bounded regardless of
-# session length. ~13.6s of history at the measured cadence above.
+# session length. ~60s of history at the 300ms ping interval.
 WINDOW_PINGS = 200
 
-# Display in dB below the strongest echo seen so far. Kept separate from
+# Display in dB below the strongest echo in the visible window (so a
+# strong transient fades back out once it scrolls off). Kept separate from
 # plot_echogram.py's constant of the same name/value since a user may
 # reasonably want a different setting for live tuning vs. offline review.
 DYNAMIC_RANGE_DB = 40
@@ -49,7 +49,6 @@ def reset_echogram_state(state):
         'columns': [],
         'ping_times': [],
         'ping_ids': [],
-        'running_peak': 0.0,
         'total_pings_seen': 0,
     })
 
@@ -138,7 +137,6 @@ def process_new_packets(new_packets, live_state):
         live_state['columns'].append(env)
         live_state['ping_times'].append(meta['T_ping_us'] / 1e6)
         live_state['ping_ids'].append(meta['PingID'])
-        live_state['running_peak'] = max(live_state['running_peak'], np.nanmax(env))
         live_state['total_pings_seen'] += 1
 
         if len(live_state['columns']) > WINDOW_PINGS:
@@ -180,7 +178,7 @@ def init_plot(live_state):
     ax_ft.set_ylabel("Range (ft)")
 
     cbar = fig.colorbar(mesh, ax=ax)
-    cbar.set_label("Echo strength (dB re: strongest return so far)")
+    cbar.set_label("Echo strength (dB re: strongest return in window)")
 
     fig.tight_layout()
     fig.show()
@@ -189,7 +187,8 @@ def init_plot(live_state):
 
 def redraw(fig, ax, mesh, live_state):
     image = make_window_image(live_state)
-    peak = live_state['running_peak'] if live_state['running_peak'] > 0 else 1.0
+    peak = np.nanmax(image) if np.isfinite(image).any() else 0.0
+    peak = peak if peak > 0 else 1.0
     with np.errstate(divide='ignore', invalid='ignore'):
         db = 20 * np.log10(image / peak)
     mesh.set_array(db.ravel())

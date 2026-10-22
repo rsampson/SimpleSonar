@@ -5,7 +5,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-#define BUFFER_SIZE 2048 // 2048 int16_t integers = 4096 bytes (4 KB)
+#define BUFFER_SIZE 4096 // 4096 int16_t integers = 8192 bytes (8 KB), ~20 ms at 200 kHz
 int16_t data_buffer[BUFFER_SIZE];
 
 // Ping output and analog input pins
@@ -14,20 +14,18 @@ int16_t data_buffer[BUFFER_SIZE];
 // from earlier pings pile up under the next one's echoes; a longer interval
 // lets it decay first.
 #define PING_INTERVAL_MS 300
-#define PING_PIN 25             // single-ended drive into the audio amplifier
+#define PING_PIN 25             // single-ended drive into the audio amplifier (11-element 40T-12 array)
 #define UNUSED_PIN 26           // former inverted half of the differential drive
-#define ANALOG_PIN 34
+#define ANALOG_PIN 34           // single 40R-12 receive element via the preamp
 // PWM (LEDC) configuration for ESP32
-#define PING_FREQUENCY 3300      // Hz
-// The transducer is narrowband (measured Q~14, ~250 Hz -3dB bandwidth around
-// ~3500-3700 Hz), so it needs only ~Q/pi =~ 4-5 cycles to reach steady
-// amplitude, and - being narrowband - a matched filter can't meaningfully
-// compress a longer single-tone burst anyway (no bandwidth to exploit).
-// Extra cycles past that just lengthen the burst and push out the near-field
-// dead zone (echoes arriving before transmission finishes are unusable) with
-// no resolution benefit. 6 cycles keeps comfortable margin above the ~4-5
-// needed to reach full amplitude while shrinking that dead zone.
-#define PING_CYCLES 6           // number of cycles to emit
+#define PING_FREQUENCY 40000     // Hz, the 40T/40R-12 resonance (40.0 +/- 1.0 kHz)
+// The 40T-12 is narrowband (~4 kHz bandwidth, Q~10), so it needs only
+// ~Q/pi =~ 3-4 cycles to reach steady amplitude, and a matched filter can't
+// meaningfully compress a longer single-tone burst (no bandwidth to exploit).
+// Extra cycles past that lengthen the burst and push out the near-field dead
+// zone, but add energy per ping. 10 cycles (250 us, ~4 cm) keeps margin
+// above the ramp-up while staying short.
+#define PING_CYCLES 10          // number of cycles to emit
 #define PING_RESOLUTION 8       // bits (0-255)
 // LEDC channel pinned explicitly so it lands on timer 0, which
 // emit_burst() resets to phase-lock each burst.
@@ -41,10 +39,12 @@ int16_t data_buffer[BUFFER_SIZE];
 // roughly 25-40 kHz and makes the per-sample spacing jittery (it's timed by
 // software, not hardware). The continuous driver clocks conversions from
 // the APB/ADC hardware timer instead, so ADC_SAMPLE_FREQ_HZ is the true,
-// uniform per-sample interval - which is what makes 100 kHz practical here.
+// uniform per-sample interval - which is what makes 200 kHz practical here.
 #define ADC_RESOLUTION_BITS 12
 #define ADC_ATTENUATION ADC_ATTEN_DB_12 // ~0-3.3V input range
-#define ADC_SAMPLE_FREQ_HZ 100000 // 100 kHz continuous-mode sample rate
+// 200 kHz gives 5 samples per 40 kHz cycle, puts Nyquist well above the
+// preamp's ~61 kHz poles, and keeps sample_dt_us an exact integer (5 us).
+#define ADC_SAMPLE_FREQ_HZ 200000 // 200 kHz continuous-mode sample rate
 // Bytes per ADC continuous-mode DMA frame (must be a multiple of
 // SOC_ADC_DIGI_RESULT_BYTES, 4 on ESP32). Kept well under the ~4092 byte
 // single-descriptor ceiling used elsewhere in the Arduino core's ADC
@@ -53,7 +53,7 @@ int16_t data_buffer[BUFFER_SIZE];
 // Serial baud rate. This single UART carries data packets, debug/status
 // text, and START/STOP commands - see send_data()/process_commands() and
 // the framing note above them. At 115200 baud, transmitting the header +
-// 4KB payload takes ~250-350ms, which dominates the ping-to-ping period.
+// 8KB payload would take ~700ms; at 921600 it takes ~90ms.
 #define SERIAL_BAUD 921600
 
 // Packet header sent ahead of each data_buffer payload. Timestamps are
@@ -71,6 +71,7 @@ struct __attribute__((packed)) PingHeader {
 
 uint32_t ping_id = 0;
 bool ping_enabled = false;
+bool tone_enabled = false; // continuous PING_FREQUENCY on PING_PIN, for scope debugging
 String serial_command_buffer;
 
 adc_continuous_handle_t adc_handle = NULL;
@@ -264,11 +265,26 @@ void handle_serial_command(const String &command) {
     normalized.trim();
 
     if (normalized.equalsIgnoreCase("START")) {
+        if (tone_enabled) {
+            tone_enabled = false;
+            ledcWrite(PING_PIN, 0);
+        }
         ping_enabled = true;
         Serial.println("START command received: pinging enabled");
     } else if (normalized.equalsIgnoreCase("STOP")) {
         ping_enabled = false;
+        if (tone_enabled) {
+            tone_enabled = false;
+            ledcWrite(PING_PIN, 0);
+        }
         Serial.println("STOP command received: pinging disabled");
+    } else if (normalized.equalsIgnoreCase("TONE")) {
+        // Leave the LEDC output running: a steady PING_FREQUENCY square wave
+        // on PING_PIN until STOP or START.
+        ping_enabled = false;
+        tone_enabled = true;
+        ledcWrite(PING_PIN, PING_DUTY);
+        Serial.println("TONE command received: continuous tone on PING_PIN");
     }
 }
 
@@ -297,7 +313,7 @@ void process_commands() {
 //
 // A duty change only takes effect at the next PWM period boundary, so on the
 // free-running timer the burst would start anywhere from 0 to 1 period
-// (~300 us) after the ledcWrite() call, at a different point every ping.
+// (25 us) after the ledcWrite() call, at a different point every ping.
 // That random start scrambles the echo's phase against the ADC window and
 // defeats coherent (waveform) averaging across pings. Resetting the timer
 // first puts the counter at 0, so the first boundary is exactly one period

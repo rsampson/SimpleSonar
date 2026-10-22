@@ -21,7 +21,7 @@ OUTPUT_FILE = 'sensor_stream.csv'
 START_COMMAND = b'START\n'
 STOP_COMMAND = b'STOP\n'
 
-NUM_SAMPLES = 2048
+NUM_SAMPLES = 4096  # must match BUFFER_SIZE in firmware
 PAYLOAD_BYTES = NUM_SAMPLES * 2  # int16_t per sample
 
 # PingHeader layout (matches the packed struct in firmware src/main.cpp),
@@ -35,10 +35,10 @@ HEADER_FORMAT = '<IqqHI'
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
 
-def send_control_command(ser, command):
+def send_control_command(ser, command, settle_s=0.1):
     ser.write(command)
     ser.flush()
-    time.sleep(0.1)
+    time.sleep(settle_s)
 
 
 class BufferedReader:
@@ -374,8 +374,10 @@ def continuous_serial_to_csv(fresh=False):
             # actually draining the port lets the ESP32's packets pile up
             # unread, and once the OS receive buffer's limit is hit the
             # first packet or two comes in corrupted (the loop resyncs on
-            # its own, but starting clean avoids that entirely).
-            send_control_command(ser, START_COMMAND)
+            # its own, but starting clean avoids that entirely). No settle
+            # sleep either: the first 8 KB packet starts ~21 ms after START,
+            # and ~4.7 KB unread (tty buffer + USB-serial FIFO) drops a byte.
+            send_control_command(ser, START_COMMAND, settle_s=0)
             print(f"Sent start command to ESP32: {START_COMMAND.decode().strip()}")
             print(f"Streaming data into {OUTPUT_FILE}. Press Ctrl+C to stop.\n")
 
