@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 30,
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && { git pull --ff-only -q 2>&1 || echo 'git pull FAILED: pull manually before relying on bench/TEST_LOG.md'; } && echo '--- newest entries in bench/TEST_LOG.md ---' && sed -n '/^## /,$p' bench/TEST_LOG.md | head -60"
+          }
+        ]
+      }
+    ]
+  }
+}

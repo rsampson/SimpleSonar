@@ -110,3 +110,11 @@ The burst length, not transducer ringing, sets range resolution. Use an echo's *
 - **Supply isolation matters most in the analog front end.** Keep the speaker amp on its own supply, keep the preamp supply filtered (22 Ω + 100 µF + 0.1 µF at its pins), use a single-point ground, and re-run `bench/run_test.py ... crosstalk` after any wiring change.
 - The fitted preamp is an AD828. Profile `ad828-v1` (93 counts/mV, 37.5 dB, −3 dB band 75 Hz–5.1 kHz, ~1 count RMS noise) predates the 40 kHz conversion: the feedback caps across the 20 kΩ resistors are now 130 pF (~61 kHz pole per stage, ~−3 dB at 40 kHz for both), and the electret bias network has been removed. The receive element is loaded directly by the 2.2 kΩ input resistor.
 - The hardware build is fragile. If the data looks physically implausible (noise, drift, gain, oscillation) but framing is clean (`ping_id` continuous, no resync warnings), suspect the hardware or wiring before the code.
+
+## Test results across machines
+
+Hardware tests run on the test laptop; most development happens on the office PC. Git is the only channel between them, so test results go in the repo, not in Claude's per-machine memory.
+
+- **After a test session (laptop):** add a dated entry at the top of `bench/TEST_LOG.md` (hardware state, captures and their paths, results, decisions, open items), update its open-items list, then commit and push to master. Move durable findings into `bench/NOTES.md` or this file.
+- **At the start of a session (either machine):** the `SessionStart` hook in `.claude/settings.json` runs `git pull --ff-only` and prints the newest log entries. If it reports a failed pull, pull manually before relying on the log.
+- Raw captures (`bench/profiles/*/raw/`) are gitignored and stay on the laptop. Commit plots, `profile.json` and the analysis scripts so results can be reproduced and reviewed elsewhere.
