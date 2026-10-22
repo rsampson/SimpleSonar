@@ -4,10 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-An ESP32-based sonar front end and PC-side tooling for capturing and visualizing ping data over air. Two halves:
+An ESP32-based sonar front end and PC-side tooling for capturing and visualizing ping data over air:
 
-- **firmware/** — PlatformIO/Arduino project for the ESP32. Drives a speaker (through an audio amplifier) with a short tone burst, samples the reflected signal from a microphone via the ESP-IDF ADC continuous/DMA driver, and streams framed ping packets over the same UART used for flashing/debug output.
+- **firmware/** — PlatformIO/Arduino project for the ESP32. Drives a speaker (through an audio amplifier) with a short tone burst, samples the microphone via the ESP-IDF ADC continuous/DMA driver, and streams framed ping packets over the flashing/debug UART.
 - **pc/** — Python tools that receive, log, and visualize ping data.
+- **bench/** — characterization of the electronics alone (see below).
+- **hardware/** — KiCad designs: `sonar_preamp/` (older TL081 preamp, kept deliberately) and `sonar_amp.*` (separate board, untracked). Edit KiCad files only through the Konnect MCP tools.
 
 ## Commands
 
@@ -19,9 +21,7 @@ pio run                   # build only
 pio device monitor        # serial monitor (921600 baud)
 ```
 
-Note: system-wide `pio` (apt package) has been broken on this machine (Click library incompatibility) — use `~/.platformio/penv/bin/pio` if the `pio` on PATH fails.
-
-Upload/monitor port is hardcoded in `firmware/platformio.ini` (currently `/dev/ttyUSB0`) and may need updating since the ESP32's USB-serial enumeration has been observed to shift between `/dev/ttyUSB0`/`/dev/ttyUSB1` depending on what else is plugged in.
+If the system `pio` fails (broken apt package), use `~/.platformio/penv/bin/pio`. The upload/monitor port is hardcoded in `firmware/platformio.ini` (`/dev/ttyUSB0`); the ESP32 sometimes enumerates as `/dev/ttyUSB1` instead.
 
 ### PC (from `pc/`)
 
@@ -29,77 +29,81 @@ Upload/monitor port is hardcoded in `firmware/platformio.ini` (currently `/dev/t
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python receive.py              # record a stream to sensor_stream.csv (Ctrl+C to stop; --fresh to discard existing CSV)
-python plot_sensor_stream.py   # raw per-packet waveform, ←/→ to navigate packets
+python receive.py              # record to sensor_stream.csv (Ctrl+C to stop; --fresh discards existing CSV)
+python plot_sensor_stream.py   # raw per-packet waveform, ←/→ to navigate
 python plot_matched_filter.py  # raw + matched-filter view, ←/→ to navigate
 python plot_echogram.py        # full-recording waterfall echogram
-python plot_echogram_live.py   # live-scrolling echogram - run alongside receive.py in a second terminal
-python run_pipeline.py         # runs receive.py, plot_echogram.py, plot_matched_filter.py in sequence
+python plot_echogram_live.py   # live echogram; run alongside receive.py
+python run_pipeline.py         # receive.py → plot_echogram.py → plot_matched_filter.py
 
-pytest                         # run the pc/tests/ suite (also runnable as `pytest pc/` from repo root)
+pytest                         # pc/tests/ (also `pytest pc/` from repo root)
 ```
 
-All plotting scripts read `sensor_stream.csv` from the current directory. `pc/` has a pytest suite (`pc/tests/`, config in `pc/pyproject.toml`) covering packet framing/parsing (`receive.py`'s `parse_next_event`), `BufferedReader`, CSV loading, the live-tailing logic in `plot_echogram_live.py`, and the matched-filter/envelope math — it does not cover the hardware-facing serial handshake (`_probe_port`/`find_sonar_port`) or matplotlib rendering, which need real hardware/manual verification. `firmware/test/` is an untouched PlatformIO scaffold.
+All plotting scripts read `sensor_stream.csv` from the current directory. The tests cover packet parsing (`parse_next_event`), `BufferedReader`, CSV loading, live tailing, and the matched-filter/envelope math. They do not cover the serial handshake (`_probe_port`/`find_sonar_port`) or matplotlib rendering, which need real hardware. `firmware/test/` is an untouched scaffold.
 
 ### Bench (from repo root)
 
 ```bash
 python bench/run_test.py --profile NAME setup|noise|step|sine|linearity|crosstalk|reanalyze|report
-pytest bench/                  # synthetic-signal tests for the analysis + an offline CLI run
+pytest bench/
 ```
 
-`bench/` characterizes the electronics alone: with the mic removed, a bench generator drives the mic node through a ÷1000 (or ÷100) resistor pad and the tools measure noise, step/frequency response, linearity and burst crosstalk, saving each build as a profile in `bench/profiles/NAME/` (`profile.json`, `response.npz`, `raw/*.csv`, `report.md`). Firmware pings normally during the tests; the generator is unsynchronised, so the ping-locked part of each capture (the across-ping mean) is subtracted before analysing the stimulus and is itself the crosstalk measurement. It reuses `pc/receive.py`'s parser and `pc/plot_*` helpers via `sys.path` and leaves `pc/` unchanged. Procedure and pad wiring: `bench/README.md`; plan: `hardware/signal_chain_characterization_plan.md`.
+With the mic removed, a bench generator drives the mic node through a ÷1000 (or ÷100) pad; the tools measure noise, step/frequency response, linearity and burst crosstalk and save each build as `bench/profiles/NAME/`. The firmware pings normally; the ping-locked part of each capture (across-ping mean) is subtracted before analysis and is itself the crosstalk measurement. `bench/` reuses `pc/` code via `sys.path` and must not modify `pc/`. Procedure: `bench/README.md`; past findings: `bench/NOTES.md`.
 
 ## Architecture
 
 ### Single shared UART
 
-Data packets, plain-text debug/status lines, and START/STOP control commands from the PC all share **one** `Serial` port at 921600 baud (`SERIAL_BAUD` in `firmware/src/main.cpp` must match `BAUD_RATE` in `pc/receive.py`). `receive.py` distinguishes a binary packet from a debug line by peeking the leading byte: `0xAA` (start of the `0xAA 0xBB` sync sequence) means a packet follows; anything else is a text line up to `\n`. **Firmware must never call `Serial.print()`/`println()` while a packet is being written** (see `send_data()` in main.cpp) — interleaved text would land mid-packet and corrupt framing.
+Packets, debug text, and START/STOP commands share **one** `Serial` port at 921600 baud (`SERIAL_BAUD` in `firmware/src/main.cpp` must match `BAUD_RATE` in `pc/receive.py`). `receive.py` treats a leading `0xAA` byte as the start of a packet and anything else as a text line up to `\n`. **Firmware must never print text while a packet is being written** (see `send_data()`), or framing breaks.
 
 ### Ping packet format
 
-Defined by the packed `PingHeader` struct in `firmware/src/main.cpp` and mirrored by `HEADER_FORMAT`/`HEADER_SIZE` in `pc/receive.py` — the two must be kept in sync manually if either changes:
+The packed `PingHeader` struct in `main.cpp` is mirrored by `HEADER_FORMAT`/`HEADER_SIZE` in `receive.py`. There is no shared schema, so change both together.
 
 | Field | Type | Notes |
 |---|---|---|
 | `sync` | 2 bytes | `0xAA 0xBB` |
 | `ping_id` | `uint32_t` | monotonic sequence number |
-| `t_ping_us` | `int64_t` | `esp_timer_get_time()` at burst start — ESP32-relative, not wall-clock |
+| `t_ping_us` | `int64_t` | `esp_timer_get_time()` at burst start (ESP32-relative) |
 | `t_sample_us` | `int64_t` | `esp_timer_get_time()` at start of sampling |
 | `num_samples` | `uint16_t` | = `BUFFER_SIZE` |
 | `sample_dt_us` | `uint32_t` | nominal `1e6 / ADC_SAMPLE_FREQ_HZ` |
 | payload | `num_samples × int16_t` | raw ADC samples |
 
-`sensor_stream.csv` (written by `receive.py`) stores one row per packet with columns `Timestamp, PingID, T_ping_us, T_sample_us, NumSamples, SampleDt_us, Int_0..Int_{N-1}`. Only this current format is supported — older CSVs without `PingID`/timing columns won't load in `plot_sensor_stream.py`.
+`sensor_stream.csv` has one row per packet: `Timestamp, PingID, T_ping_us, T_sample_us, NumSamples, SampleDt_us, Int_0..Int_{N-1}`. Older CSVs without the `PingID`/timing columns are not supported.
 
 ### Firmware signal path (`firmware/src/main.cpp`)
 
-1. `emit_burst()` drives a single-ended square wave on `PING_PIN` (GPIO25) into an audio amplifier and 2.5" 8 Ω speaker via one hardware LEDC PWM channel, free-running at `PING_FREQUENCY` and gated on for `PING_CYCLES` cycles. (The earlier piezo transducer needed a differential pair on GPIO25/26; GPIO26 is now `UNUSED_PIN`, left as a high-impedance input.) The receiver is an electret microphone on `ANALOG_PIN` (GPIO34, input-only). The LEDC timer is reset before each burst (`ledc_timer_rst` on timer 0, channel pinned via `PING_CHANNEL`) so the burst starts exactly one period after the reset instead of at a random point in the free-running cycle (a duty change only latches at the next period boundary); this phase-locks every ping to the ADC window so waveforms can be averaged coherently. `emit_burst()` returns the true burst-start timestamp, which becomes `t_ping_us`. `PING_INTERVAL_MS` (300) spaces successive bursts: at the ~74 ms the serial transfer alone allows, the garage's reverberation from earlier pings piled up under later echoes (a 162 cm target visibly changed the signal at 60 cm, before any echo could arrive); at 300 ms that pre-echo contamination dropped ~8x. Direct-path speaker→mic measurements (mic 50 in and 100 in away) put the received pulse at ~3.2 kHz with a ~2.9-3.5 kHz -3 dB band and Q≈7: it builds over ~1.7 ms (≈ the 1.82 ms, 6-cycle burst) and decays to 1/e in ~0.7 ms, so the burst length, not transducer ringing, now sets range resolution. Arrival times agreed with the 345.8 m/s prediction to within the tape-measure uncertainty of those setups (distances were approximate, ~±5 cm ≈ ±150 µs), so there is no large fixed delay in the timestamps/range axis, but that is not a ~20 µs calibration. Those captures were in a closed, cluttered garage with a hard surface ~20 in behind the mic, so pulse-shape figures (Q, ring-down) are rough: the strongest return in the 2026-10-14 100 in capture, 2.95 ms after the first arrival, is exactly the 2×20 in extra path from that surface. Use an echo's leading edge, not its envelope peak, as the range marker (`bench/direct_path.py` reads the first arrival from the raw coherent mean). With the mic clamped, the arrival jitter is ~2 µs. The slow (<300 Hz) transient present early in every ping is electrical coupling, not acoustic (it persists with the mic 2.5 m away). The old piezo was narrowband (Q~14), which is why the cycle count was kept small and a stepped-chirp drive was reverted; that implementation is preserved on the `chirp-drive` git branch and may be worth revisiting with the lower-Q speaker.
-2. After an `AFTER_DELAY_US` settle delay (transducer mechanical ringdown), `capture_samples()` reads `BUFFER_SIZE` (2048) samples via the ESP-IDF ADC continuous/DMA driver at a true hardware-clocked `ADC_SAMPLE_FREQ_HZ` (100 kHz) — not `analogRead()`, which is software-timed and jittery (~25-40 kHz).
-3. `capture_samples()` first swaps every adjacent pair of samples back into time order: the original ESP32's ADC DMA delivers each pair swapped, which (found on the bench, and confirmed by the image amplitude tracking tan(2πf/fs) from 100 Hz to 15 kHz) put every sample up to one sample period from its true time, alternating, added an image of every tone at fs/2 − f, and attenuated the fundamental by cos(2πf/fs). Captures recorded before this fix (everything from before 2026-10-14, including the earlier sonar and direct-path data) have the swap; bench profile data was corrected offline. Then `repair_adc_glitches()` linearly interpolates across short runs of spurious exact-zero samples that the original ESP32's ADC digital controller emits at each hardware burst restart (a driver artifact, not real signal).
-4. `send_data()` writes the header + raw `int16_t` payload straight to `Serial`.
+Key tunables are at the top of the file: `PING_FREQUENCY` (3300 Hz), `PING_CYCLES` (6), `PING_INTERVAL_MS` (300), ADC settings, `SERIAL_BAUD`.
 
-Key tunables live at the top of `main.cpp`: `PING_FREQUENCY`, `PING_CYCLES`, ADC resolution/attenuation/`ADC_SAMPLE_FREQ_HZ`, `SERIAL_BAUD`.
+1. `emit_burst()` drives a single-ended square wave on `PING_PIN` (GPIO25) via one LEDC PWM channel, gated on for `PING_CYCLES` cycles. GPIO26 (`UNUSED_PIN`) is left as a high-impedance input. The LEDC timer is reset before each burst so every ping is phase-locked to the ADC window, which allows coherent averaging and background subtraction. The function returns the true burst-start time (`t_ping_us`). The mic is on `ANALOG_PIN` (GPIO34).
+2. After `AFTER_DELAY_US`, `capture_samples()` reads `BUFFER_SIZE` (2048) samples at a hardware-clocked `ADC_SAMPLE_FREQ_HZ` (100 kHz). Don't use `analogRead()`: it is software-timed and jittery.
+3. `capture_samples()` un-swaps each adjacent sample pair (the original ESP32's ADC DMA delivers them swapped; captures from before 2026-10-14 still have the swap). `repair_adc_glitches()` then interpolates across the short runs of spurious exact-zero samples the ADC emits at each hardware burst restart.
+4. `send_data()` writes the header and raw `int16_t` payload to `Serial`.
+
+The burst length, not transducer ringing, sets range resolution. Use an echo's **leading edge**, not its envelope peak, as the range marker (`bench/direct_path.py`, `bench/echo_onset.py`).
 
 ### PC receive path (`pc/receive.py`)
 
-- Auto-detects the sonar's port by probing `SERIAL_PORT_CANDIDATES` (`/dev/ttyUSB0`, `/dev/ttyUSB1`) and checking which one responds correctly to a START command; set `SERIAL_PORT` to a literal path to skip this. Set to `None` by default because the enumerated port has been observed to change.
-- Uses a `BufferedReader` wrapper around the serial port rather than one-byte-at-a-time reads — at 921600 baud, syscall-per-byte reading can't keep up and risks silent kernel receive-buffer overflow/desync.
-- The packet-framing/resync state machine lives in `parse_next_event()`, a standalone function (takes a `BufferedReader`-like reader + a small state dict, returns a `ParseResult` describing what happened) kept separate from the serial/CSV I/O in `continuous_serial_to_csv()` specifically so it's unit-testable without a real serial port — see `pc/tests/test_receive_parse.py`.
-- If packet framing desyncs (e.g. from a STOP/START race where an in-flight ping still transmits after STOP), the read loop resyncs on the next `0xAA 0xBB` sync bytes and logs a `ping_id` gap warning rather than writing corrupted rows.
+- `SERIAL_PORT = None` auto-detects the port by sending START to each of `SERIAL_PORT_CANDIDATES` (`/dev/ttyUSB0`, `/dev/ttyUSB1`); set it to a path to skip detection.
+- A `BufferedReader` wraps the port, because reading one byte per syscall can't keep up at 921600 baud.
+- Framing and resync live in `parse_next_event()`, which is separate from the serial/CSV I/O so it can be unit-tested (`pc/tests/test_receive_parse.py`). On desync (e.g. an in-flight ping after STOP), it resyncs on the next `0xAA 0xBB` and logs a `ping_id` gap instead of writing corrupt rows.
 
 ### PC plotting scripts
 
-- `plot_sensor_stream.py` — raw waveform per packet; x-axis is one-way range in cm from burst start, computed by `range_axis_cm()` from `SampleDt_us`, `SPEED_OF_SOUND_M_S`, and the per-packet `T_sample_us - T_ping_us` offset (sampling starts ~2.8 ms / ~48 cm after the burst begins). All the plotting scripts use this helper.
-- `plot_matched_filter.py` — `make_ping_template()` reconstructs the *actual* transmitted burst shape (not an idealized sinusoid) and cross-correlates it against the raw signal to compress each echo into a sharp peak.
-- `plot_echogram.py` — applies the matched filter across the whole recording and renders amplitude envelope (Hilbert transform) as a range-vs-time waterfall in dB (`DYNAMIC_RANGE_DB`), blanking the near-range region still ringing from the transmit burst. `--background NO_TARGET.csv` subtracts that capture's mean waveform from every ping first: the burst is phase-locked, so static clutter (direct-sound ring-down, room reverberation) repeats ping after ping and cancels, leaving only what changed (a new target). Record the background back-to-back with the data, same system state, nobody in the beam. Without it, a target at ~2.5 m was lost in static clutter in the echogram (the 77 in target was visible without it). The matched-filter band peaks ~20 cm beyond the echo's true leading edge (see `bench/echo_onset.py`).
-- `plot_echogram_live.py` — same matched-filter/envelope waterfall as `plot_echogram.py`, but tails `sensor_stream.csv` as `receive.py` writes it and shows a live-scrolling fixed-width window (`WINDOW_PINGS`) instead of the whole finished recording. Run as a second process alongside `receive.py`; never touches the serial port.
-- `run_pipeline.py` — chains `receive.py` → `plot_echogram.py` → `plot_matched_filter.py`, each stage starting once the previous exits.
+- `plot_sensor_stream.py` — raw waveform per packet. Its `range_axis_cm()` (used by every plot script) converts samples to one-way range from burst start using `SampleDt_us`, `SPEED_OF_SOUND_M_S`, and `T_sample_us - T_ping_us` (sampling starts ~2.8 ms / ~48 cm after the burst).
+- `plot_matched_filter.py` — `make_ping_template()` rebuilds the actual transmitted burst and cross-correlates it with the signal. `PING_FREQUENCY_HZ`/`PING_CYCLES` here must match the firmware.
+- `plot_echogram.py` — matched-filter envelope (Hilbert) waterfall in dB, with near-range blanking. `--background NO_TARGET.csv` subtracts a no-target capture's mean waveform to cancel static clutter; record it back-to-back with the data, with nobody in the beam. The matched-filter band peaks ~20 cm beyond an echo's true leading edge.
+- `plot_echogram_live.py` — the same view, tailing `sensor_stream.csv` live (`WINDOW_PINGS` wide). It never touches the serial port.
+- `run_pipeline.py` — runs the three stages in sequence.
+
+### Branches
+
+- `chirp-drive` — stepped-chirp drive, reverted for the old narrowband piezo. It might be worth retrying with the speaker.
+- `add-wiener-deconvolution` — PC-side Wiener deconvolution. It is unmerged, and its firmware conflicts with master. `bench/WIENER_EVALUATION.md` found no verified advantage over the matched filter, which already separates targets 40 cm apart.
 
 ## Working notes
 
-- **Supply isolation matters more than anything else in the analog front end** (bench-measured, 2026-10-14; profiles in `bench/profiles/ad828-v1*`). With the mic-bias resistor fitted, the speaker amp sharing the ESP32's VIN rail put a 767 counts RMS slow transient (−1178..+1979 counts) on the preamp output after every burst; the amp on its own supply cut it to ~12. A further ~4-7x drop in per-ping noise and ping-locked pickup (22 → 5.8 and 18 → 2.9 counts RMS) came from filtering the preamp's own supply (22 Ω + 100 µF + 0.1 µF at its pins) and joining the grounds at a single point. Keep the amp on its own supply, keep the preamp supply filtered, and re-run `bench/run_test.py ... crosstalk` after any wiring change.
-- The preamp measured (`ad828-v1`): gain 93 counts/mV (37.5 dB nominal), −3 dB band 75 Hz–5.1 kHz (two 7.9 kHz low-pass poles; 3.2 kHz sits −1.2 dB down), 36.8 dB rejection at 60 kHz, ADC-limited noise floor (~1 count RMS in 2-6 kHz with a low-impedance input).
-
-- This is a real physical hardware project with an admittedly fragile current build (transducer/preamp/wiring). When captured data looks physically implausible (noise, drift, gain, oscillation) but the serial framing/protocol layer is clean (`ping_id` continuity, no resync warnings), suspect the hardware/wiring before the firmware or PC code.
-- Firmware and PC-side packet definitions (`PingHeader` in main.cpp, `HEADER_FORMAT` in receive.py) must be changed together — there's no shared schema file.
+- **Supply isolation matters most in the analog front end.** Keep the speaker amp on its own supply, keep the preamp supply filtered (22 Ω + 100 µF + 0.1 µF at its pins), use a single-point ground, and re-run `bench/run_test.py ... crosstalk` after any wiring change.
+- The fitted preamp is an AD828 (profile `ad828-v1`): 93 counts/mV (37.5 dB), −3 dB band 75 Hz–5.1 kHz (3.2 kHz is −1.2 dB), ADC-limited noise floor of ~1 count RMS.
+- The hardware build is fragile. If the data looks physically implausible (noise, drift, gain, oscillation) but framing is clean (`ping_id` continuous, no resync warnings), suspect the hardware or wiring before the code.
