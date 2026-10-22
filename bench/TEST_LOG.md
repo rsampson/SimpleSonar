@@ -9,7 +9,7 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
-## 2026-10-22 (starfish) — conversion to 40 kHz piezo transducers
+## 2026-10-22 (starfish, host) — conversion to 40 kHz piezo transducers
 
 **Hardware:** transmit is an 11-element array of 40T-12 piezos (~25 mm average
 spacing, staggered unevenly to blur sidelobes), driven through the audio amp;

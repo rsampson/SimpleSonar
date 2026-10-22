@@ -113,7 +113,7 @@ The burst length, not transducer ringing, sets range resolution. Use an echo's *
 
 ## Test results across machines
 
-Hardware tests run on the test laptop; most development happens on the office PC. Git is the only channel between them, so test results go in the repo, not in Claude's per-machine memory.
+Hardware tests run on the test laptop; most development happens on the office PC. The machines are **starfish** (the host) and **crab** (the laptop); label `bench/TEST_LOG.md` entries with the hostname. Tests can also be run on starfish. Git is the only channel between them, so test results go in the repo, not in Claude's per-machine memory.
 
 - **After a test session (laptop):** add a dated entry at the top of `bench/TEST_LOG.md` (hardware state, captures and their paths, results, decisions, open items), update its open-items list, then commit and push to master. Move durable findings into `bench/NOTES.md` or this file.
 - **At the start of a session (either machine):** the `SessionStart` hook in `.claude/settings.json` runs `git pull --ff-only` and prints the newest log entries. If it reports a failed pull, pull manually before relying on the log.
