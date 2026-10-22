@@ -1,0 +1,359 @@
+{
+  "name": "sweep-2026-10-22",
+  "created": "2026-10-22T15:35:55",
+  "hardware": {},
+  "setup": {},
+  "tests": {
+    "freq_sweep": {
+      "conditions": {
+        "target_m": 1.4097,
+        "pings_per_step": 20,
+        "cycles": 10
+      },
+      "result": {
+        "peak_hz": 39742.0,
+        "peak_echo_amp_counts": 158.75998574009458,
+        "low_3db_hz": 37694.09206721133,
+        "high_3db_hz": 41214.12007303565,
+        "bandwidth_3db_hz": 3520.0280058243225,
+        "cycles": 10,
+        "range_cm_at_peak": 141.47727811000001,
+        "points": [
+          {
+            "echo_amp_counts": 56.35676017183527,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.438,
+            "direct_amp_counts": 2.190675205376521,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 36000.0,
+            "f_actual_hz": 36004.0
+          },
+          {
+            "echo_amp_counts": 62.12018171369219,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.425,
+            "direct_amp_counts": 2.86214091747583,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 36250.0,
+            "f_actual_hz": 36248.0
+          },
+          {
+            "echo_amp_counts": 67.30741323684273,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4245,
+            "direct_amp_counts": 4.274471921693919,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 36500.0,
+            "f_actual_hz": 36496.0
+          },
+          {
+            "echo_amp_counts": 75.66918406261377,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.427,
+            "direct_amp_counts": 5.665228332056061,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 36750.0,
+            "f_actual_hz": 36748.0
+          },
+          {
+            "echo_amp_counts": 85.11960324138835,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4255,
+            "direct_amp_counts": 7.386827555920494,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 37000.0,
+            "f_actual_hz": 37003.0
+          },
+          {
+            "echo_amp_counts": 94.00290833492386,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4385,
+            "direct_amp_counts": 9.564535858389686,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 37250.0,
+            "f_actual_hz": 37244.0
+          },
+          {
+            "echo_amp_counts": 93.97189634153816,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.442,
+            "direct_amp_counts": 11.704546137953237,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 37500.0,
+            "f_actual_hz": 37506.0
+          },
+          {
+            "echo_amp_counts": 118.06600885963212,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4415,
+            "direct_amp_counts": 15.145777434228188,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 37750.0,
+            "f_actual_hz": 37754.0
+          },
+          {
+            "echo_amp_counts": 132.00540378094541,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.454,
+            "direct_amp_counts": 17.73459804696439,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 38000.0,
+            "f_actual_hz": 38005.0
+          },
+          {
+            "echo_amp_counts": 131.73094083950176,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.466999999999999,
+            "direct_amp_counts": 19.63751287555994,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 38250.0,
+            "f_actual_hz": 38241.0
+          },
+          {
+            "echo_amp_counts": 134.83972249662673,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.451,
+            "direct_amp_counts": 20.64552432759715,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 38500.0,
+            "f_actual_hz": 38499.0
+          },
+          {
+            "echo_amp_counts": 134.01714678057252,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.474499999999999,
+            "direct_amp_counts": 21.539048268950896,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 38750.0,
+            "f_actual_hz": 38741.0
+          },
+          {
+            "echo_amp_counts": 137.68605774983223,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4725,
+            "direct_amp_counts": 22.909347494285036,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 39000.0,
+            "f_actual_hz": 39005.0
+          },
+          {
+            "echo_amp_counts": 153.62431190816736,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.486,
+            "direct_amp_counts": 23.68818914007573,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 39250.0,
+            "f_actual_hz": 39254.0
+          },
+          {
+            "echo_amp_counts": 156.20911994551977,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4845,
+            "direct_amp_counts": 22.393117312614507,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 39500.0,
+            "f_actual_hz": 39506.0
+          },
+          {
+            "echo_amp_counts": 158.75998574009458,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.483,
+            "direct_amp_counts": 22.26166194176355,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 39750.0,
+            "f_actual_hz": 39742.0
+          },
+          {
+            "echo_amp_counts": 151.5969086215923,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.496,
+            "direct_amp_counts": 20.999925366552226,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 40000.0,
+            "f_actual_hz": 40000.0
+          },
+          {
+            "echo_amp_counts": 141.06884777080774,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4995,
+            "direct_amp_counts": 20.340670764532323,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 40250.0,
+            "f_actual_hz": 40241.0
+          },
+          {
+            "echo_amp_counts": 144.04536181445692,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.498,
+            "direct_amp_counts": 18.76130489950074,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 40500.0,
+            "f_actual_hz": 40506.0
+          },
+          {
+            "echo_amp_counts": 139.73825829096356,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.512,
+            "direct_amp_counts": 16.836507234606795,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 40750.0,
+            "f_actual_hz": 40754.0
+          },
+          {
+            "echo_amp_counts": 124.72232822714068,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.511,
+            "direct_amp_counts": 15.636101632014595,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 41000.0,
+            "f_actual_hz": 41005.0
+          },
+          {
+            "echo_amp_counts": 109.65335883796543,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.524000000000001,
+            "direct_amp_counts": 15.322727512312103,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 41250.0,
+            "f_actual_hz": 41258.0
+          },
+          {
+            "echo_amp_counts": 110.84940178766064,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.513,
+            "direct_amp_counts": 14.517656281171977,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 41500.0,
+            "f_actual_hz": 41494.0
+          },
+          {
+            "echo_amp_counts": 102.55914954728485,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.5115,
+            "direct_amp_counts": 13.618471046808724,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 41750.0,
+            "f_actual_hz": 41754.0
+          },
+          {
+            "echo_amp_counts": 96.21194808311004,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.495,
+            "direct_amp_counts": 12.88325853789279,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 42000.0,
+            "f_actual_hz": 41995.0
+          },
+          {
+            "echo_amp_counts": 80.88922769827614,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.508000000000001,
+            "direct_amp_counts": 11.706695460288678,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 42250.0,
+            "f_actual_hz": 42261.0
+          },
+          {
+            "echo_amp_counts": 55.59756092939833,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4975,
+            "direct_amp_counts": 9.96184888270793,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 42500.0,
+            "f_actual_hz": 42508.0
+          },
+          {
+            "echo_amp_counts": 56.13648996600273,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.482,
+            "direct_amp_counts": 8.980384346070679,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 42750.0,
+            "f_actual_hz": 42758.0
+          },
+          {
+            "echo_amp_counts": 43.46206997944928,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.481,
+            "direct_amp_counts": 7.694342395907926,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 43000.0,
+            "f_actual_hz": 43011.0
+          },
+          {
+            "echo_amp_counts": 35.23107945392462,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.453,
+            "direct_amp_counts": 6.765844435252273,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 43250.0,
+            "f_actual_hz": 43243.0
+          },
+          {
+            "echo_amp_counts": 27.29505140036312,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.462,
+            "direct_amp_counts": 5.312209871300865,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 43500.0,
+            "f_actual_hz": 43502.0
+          },
+          {
+            "echo_amp_counts": 23.619648873486412,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.461500000000001,
+            "direct_amp_counts": 4.725798999856292,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 43750.0,
+            "f_actual_hz": 43740.0
+          },
+          {
+            "echo_amp_counts": 17.059557140077867,
+            "echo_method": "peak",
+            "echo_peak_ms": 8.4595,
+            "direct_amp_counts": 3.8982857153215416,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 44000.0,
+            "f_actual_hz": 44004.0
+          }
+        ]
+      },
+      "run_at": "2026-10-22T15:52:50"
+    }
+  },
+  "updated": "2026-10-22T15:52:50",
+  "git_commit": "487af5d"
+}

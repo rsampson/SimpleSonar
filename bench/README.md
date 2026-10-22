@@ -71,6 +71,50 @@ Notes:
 - Gains are in ADC counts per mV of input. "dB nominal" converts counts to
   volts with 3.3 V/4096, which the ESP32 ADC only approximates.
 
+## Frequency sweep (transducers in place)
+
+`freq_sweep.py` measures the two-way (transmit × receive) frequency response
+with the transducers installed, from a reflector's echo. It doesn't need the
+injection pad or the generator.
+
+1. Put a large, flat, rigid board (at least 30 × 30 cm) about 2 m from the
+   transducers. Square it to them and centre it on the array's beam, which is
+   only about ±7 cm wide at 2 m in the plane along the array. Keep ~30 cm
+   clear in range in front of and behind it: a floor or wall echo at nearly
+   the same range adds ripple to the response.
+2. Measure the distance to the board's face.
+3. Keep the amp volume, the aim and the room fixed for the whole run (~4
+   minutes at the defaults), with nobody in the beam.
+4. Run:
+
+   ```bash
+   python bench/freq_sweep.py --profile sweep-YYYY-MM-DD --target-m 2.00
+   ```
+
+   Options: `--start`/`--stop`/`--step` in Hz (defaults 36000/44000/250),
+   `--pings` per step (20), `--cycles` for the burst length (10), and
+   `--reanalyze` to recompute from the saved captures.
+
+   The 10-cycle burst spans ~3.6 kHz itself, so its curve is the response
+   to the burst the sonar actually uses, smoothed by that width. Use
+   `--cycles 50` (~0.7 kHz) in a separate profile to measure the
+   transducers' own steady-state response. Its echo window is 1.25 ms
+   longer, so keep anything else that reflects ~50 cm or more clear behind
+   the board.
+
+Each step's echo amplitude is read from the coherent mean, demodulated at
+the drive frequency, in a window from 0.5 ms before to 2 ms after the
+expected round trip. The direct sound near range is reported too, as a
+rougher second estimate. The script prints the peak frequency, the −3 dB
+band and the echo's leading-edge range at the peak (compare it with the
+tape). It warns if any capture clipped: clipping flattens the peak, so back
+off the volume or move the board further away and rerun.
+
+Results go to `profile.json` (`freq_sweep`), `response.npz` (`sweep_*`) and
+`freq_sweep.png`; raw captures to `raw/sweep_<hz>.csv`. The firmware is left
+at the last frequency until the port is reopened (which resets it to
+`PING_FREQUENCY`).
+
 ## Output
 
 `bench/profiles/NAME/`: `profile.json` (description, pad, test conditions and

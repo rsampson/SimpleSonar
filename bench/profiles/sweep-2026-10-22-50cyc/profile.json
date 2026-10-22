@@ -1,0 +1,359 @@
+{
+  "name": "sweep-2026-10-22-50cyc",
+  "created": "2026-10-22T15:44:51",
+  "hardware": {},
+  "setup": {},
+  "tests": {
+    "freq_sweep": {
+      "conditions": {
+        "target_m": 1.4097,
+        "pings_per_step": 20,
+        "cycles": 50
+      },
+      "result": {
+        "peak_hz": 40000.0,
+        "peak_echo_amp_counts": 278.3125610856253,
+        "low_3db_hz": 39207.82579723659,
+        "high_3db_hz": 40971.529375499544,
+        "bandwidth_3db_hz": 1763.7035782629537,
+        "cycles": 50,
+        "range_cm_at_peak": 141.54643479000003,
+        "points": [
+          {
+            "echo_amp_counts": 52.38675983670625,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.459,
+            "direct_amp_counts": 2.3683388184815706,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 36000.0,
+            "f_actual_hz": 36004.0
+          },
+          {
+            "echo_amp_counts": 59.5467389712934,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.46,
+            "direct_amp_counts": 2.4093911078217936,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 36250.0,
+            "f_actual_hz": 36248.0
+          },
+          {
+            "echo_amp_counts": 66.25645066360269,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.446,
+            "direct_amp_counts": 4.00282184800758,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 36500.0,
+            "f_actual_hz": 36496.0
+          },
+          {
+            "echo_amp_counts": 74.88091747769579,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.457,
+            "direct_amp_counts": 6.516759805410068,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 36750.0,
+            "f_actual_hz": 36748.0
+          },
+          {
+            "echo_amp_counts": 80.72101464687512,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.468,
+            "direct_amp_counts": 7.77707606245593,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 37000.0,
+            "f_actual_hz": 37003.0
+          },
+          {
+            "echo_amp_counts": 88.33452292437445,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.493,
+            "direct_amp_counts": 14.738817524334204,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 37250.0,
+            "f_actual_hz": 37244.0
+          },
+          {
+            "echo_amp_counts": 106.93198254373624,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.479000000000001,
+            "direct_amp_counts": 22.93400160967633,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 37500.0,
+            "f_actual_hz": 37506.0
+          },
+          {
+            "echo_amp_counts": 125.01609504335654,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.0215,
+            "direct_amp_counts": 23.20798730450697,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 37750.0,
+            "f_actual_hz": 37754.0
+          },
+          {
+            "echo_amp_counts": 165.73827762428203,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.377,
+            "direct_amp_counts": 19.764044802246556,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 38000.0,
+            "f_actual_hz": 38005.0
+          },
+          {
+            "echo_amp_counts": 179.05368471899658,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.3695,
+            "direct_amp_counts": 23.760609275572424,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 38250.0,
+            "f_actual_hz": 38241.0
+          },
+          {
+            "echo_amp_counts": 169.59074334242572,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.361,
+            "direct_amp_counts": 33.30341992944292,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 38500.0,
+            "f_actual_hz": 38499.0
+          },
+          {
+            "echo_amp_counts": 155.26642210127622,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.5525,
+            "direct_amp_counts": 36.09967844902648,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 38750.0,
+            "f_actual_hz": 38741.0
+          },
+          {
+            "echo_amp_counts": 150.74528333047908,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.563500000000001,
+            "direct_amp_counts": 31.219020380873125,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 39000.0,
+            "f_actual_hz": 39005.0
+          },
+          {
+            "echo_amp_counts": 207.24721790076248,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.366,
+            "direct_amp_counts": 33.91926762158163,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 39250.0,
+            "f_actual_hz": 39254.0
+          },
+          {
+            "echo_amp_counts": 259.25690134883274,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.3085,
+            "direct_amp_counts": 36.10432207490755,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 39500.0,
+            "f_actual_hz": 39506.0
+          },
+          {
+            "echo_amp_counts": 273.1455692912284,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.266,
+            "direct_amp_counts": 33.840612628992936,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 39750.0,
+            "f_actual_hz": 39742.0
+          },
+          {
+            "echo_amp_counts": 278.3125610856253,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.322,
+            "direct_amp_counts": 29.611597304767063,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 40000.0,
+            "f_actual_hz": 40000.0
+          },
+          {
+            "echo_amp_counts": 250.5804749575759,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.373999999999999,
+            "direct_amp_counts": 27.205197391371254,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 40250.0,
+            "f_actual_hz": 40241.0
+          },
+          {
+            "echo_amp_counts": 227.28969774713568,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.8615,
+            "direct_amp_counts": 24.817910636437908,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 40500.0,
+            "f_actual_hz": 40506.0
+          },
+          {
+            "echo_amp_counts": 217.0384606461617,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.783999999999999,
+            "direct_amp_counts": 19.04079036316652,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 40750.0,
+            "f_actual_hz": 40754.0
+          },
+          {
+            "echo_amp_counts": 193.69170057153843,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.342,
+            "direct_amp_counts": 18.995839779632213,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 41000.0,
+            "f_actual_hz": 41005.0
+          },
+          {
+            "echo_amp_counts": 157.43077562564255,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.3745,
+            "direct_amp_counts": 18.459069227507506,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 41250.0,
+            "f_actual_hz": 41258.0
+          },
+          {
+            "echo_amp_counts": 119.63863989476842,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.4175,
+            "direct_amp_counts": 15.590167343054036,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 41500.0,
+            "f_actual_hz": 41494.0
+          },
+          {
+            "echo_amp_counts": 78.39648237872312,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.535,
+            "direct_amp_counts": 17.006093939360134,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 41750.0,
+            "f_actual_hz": 41754.0
+          },
+          {
+            "echo_amp_counts": 53.470706934457375,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.5085,
+            "direct_amp_counts": 11.816771543046386,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 42000.0,
+            "f_actual_hz": 41995.0
+          },
+          {
+            "echo_amp_counts": 33.08102561123271,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.4955,
+            "direct_amp_counts": 10.662673302279936,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 42250.0,
+            "f_actual_hz": 42261.0
+          },
+          {
+            "echo_amp_counts": 28.259068017821846,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.484,
+            "direct_amp_counts": 11.352684891663497,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 42500.0,
+            "f_actual_hz": 42508.0
+          },
+          {
+            "echo_amp_counts": 22.711203017490323,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.463000000000001,
+            "direct_amp_counts": 12.506558120642525,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 42750.0,
+            "f_actual_hz": 42758.0
+          },
+          {
+            "echo_amp_counts": 15.51982463539756,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.450999999999999,
+            "direct_amp_counts": 9.494012529639678,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 43000.0,
+            "f_actual_hz": 43011.0
+          },
+          {
+            "echo_amp_counts": 9.907969688035996,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.449,
+            "direct_amp_counts": 4.749208986931949,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 43250.0,
+            "f_actual_hz": 43243.0
+          },
+          {
+            "echo_amp_counts": 7.3624418835886,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.437,
+            "direct_amp_counts": 3.160401466966363,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 43500.0,
+            "f_actual_hz": 43502.0
+          },
+          {
+            "echo_amp_counts": 4.262193859234761,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 9.356,
+            "direct_amp_counts": 3.8819783779243107,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 43750.0,
+            "f_actual_hz": 43740.0
+          },
+          {
+            "echo_amp_counts": 2.755216350216682,
+            "echo_method": "settled mean",
+            "echo_peak_ms": 8.2595,
+            "direct_amp_counts": 3.8227398757086477,
+            "clip_fraction": 0.0,
+            "pings": 20,
+            "f_requested_hz": 44000.0,
+            "f_actual_hz": 44004.0
+          }
+        ]
+      },
+      "run_at": "2026-10-22T15:52:49"
+    }
+  },
+  "updated": "2026-10-22T15:52:49",
+  "git_commit": "487af5d"
+}

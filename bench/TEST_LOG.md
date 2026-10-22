@@ -9,6 +9,40 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
+## 2026-10-22 (starfish, host) — two-way frequency response sweeps
+
+**Hardware:** as in the conversion entry below. Transducers side by side, as for
+echo work. A large flat board 55.5 in (141.0 cm) away, squared and centred on the
+beam. Firmware gains `FREQ <hz>` and `CYCLES <n>`; the burst is timed in ns.
+
+**Captures** (`bench/profiles/<profile>/raw/sweep_<hz>.csv`):
+- `sweep-2026-10-22`: 36-44 kHz in 250 Hz steps, 20 pings per step, normal
+  10-cycle burst.
+- `sweep-2026-10-22-50cyc`: the same sweep with a 50-cycle burst (steady state).
+
+No clipping in either. Analysis: `bench/freq_sweep.py`; plots `freq_sweep.png`
+in each profile.
+
+**Results:**
+- **Steady state (50 cycles):** peak 40.00 kHz; −3 dB band 39.21-40.97 kHz
+  (1.76 kHz); −6 dB band 38.0-41.3 kHz. The upper side falls steeply (−40 dB at
+  44 kHz). The lower side has a shoulder at 38.0-38.5 kHz (−4 dB), perhaps
+  array elements resonating low.
+- **10-cycle burst:** peak 39.74 kHz; 40.0 kHz is −0.4 dB. −3 dB band 37.7-41.2 kHz
+  (3.5 kHz), wider than steady state because the 250 µs burst spans ~3.6 kHz
+  itself.
+- **Ranging at 40 kHz:** the echo's leading edge read 141.5 cm vs 141.0 cm on the
+  tape (+0.5 / +0.6 cm in the two sweeps).
+- **Tool fix:** the sweep first read long-burst echoes at their maximum, which at
+  some frequencies caught the start-up overshoot (peaks at 8.5 ms instead of
+  ~9.3 ms). Long bursts are now read as the settled mean, and the 50-cycle
+  profile was reanalyzed.
+
+**Decisions (user):** keep the 40.0 kHz drive. Chirp and Wiener deconvolution are
+not worth revisiting. A two-way bandwidth of ~1.8 kHz limits resolution to
+c/2B ≈ 10 cm whatever the waveform, and the 10-cycle burst already reaches it.
+The echo is strong (~150 counts at 1.4 m with 10 cycles).
+
 ## 2026-10-22 (starfish, host) — conversion to 40 kHz piezo transducers
 
 **Hardware:** transmit is an 11-element array of 40T-12 piezos (~25 mm average
@@ -125,8 +159,9 @@ reverberation pile up, hence the 300 ms interval.
 - A third target distance (~1 m, where the echo overlaps the direct-sound tail).
 - Re-profile the preamp with the 130 pF caps (bench defaults are now 40 kHz /
   35-45 kHz); `ad828-v1` predates the change.
-- Verify 40 kHz ranging against a measured target with `bench/echo_onset.py`.
-  Its timing windows were sized for the 3.3 kHz burst.
+- 40 kHz ranging: verified at 141 cm (+0.5 cm, `freq_sweep.py`). Other
+  distances are still to check, and `bench/echo_onset.py`'s timing windows were
+  sized for the 3.3 kHz burst.
 - Signal down from ±360 to ±70 counts late on 2026-10-22: check aim, preamp
   and wiring.
 - MOSFET-input buffer for the 40R-12 (2.2 kΩ load costs ~6-9 dB per the datasheet).

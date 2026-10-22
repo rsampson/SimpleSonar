@@ -45,8 +45,11 @@ All plotting scripts read `sensor_stream.csv` from the current directory. The te
 
 ```bash
 python bench/run_test.py --profile NAME setup|noise|step|sine|linearity|crosstalk|reanalyze|report
+python bench/freq_sweep.py --profile NAME --target-m 2.0   # two-way response from a reflector's echo
 pytest bench/
 ```
+
+`freq_sweep.py` steps the drive frequency with `FREQ` (36–44 kHz, 250 Hz steps by default) with the transducers in place and a flat reflector at `--target-m`. It reads each step's echo in a window around the round trip and reports the peak frequency, the −3 dB band and the echo's leading-edge range. At the default 10 cycles the burst's own ~3.6 kHz width smooths the curve; `--cycles 50` measures the transducers' steady-state response.
 
 With the mic removed, a bench generator drives the mic node through a ÷1000 (or ÷100) pad; the tools measure noise, step/frequency response, linearity and burst crosstalk and save each build as `bench/profiles/NAME/`. The firmware pings normally; the ping-locked part of each capture (across-ping mean) is subtracted before analysis and is itself the crosstalk measurement. `bench/` reuses `pc/` code via `sys.path` and must not modify `pc/`. Procedure: `bench/README.md`; past findings: `bench/NOTES.md`.
 
@@ -57,6 +60,8 @@ With the mic removed, a bench generator drives the mic node through a ÷1000 (or
 Packets, debug text, and START/STOP/TONE commands share **one** `Serial` port at 921600 baud (`SERIAL_BAUD` in `firmware/src/main.cpp` must match `BAUD_RATE` in `pc/receive.py`). `receive.py` treats a leading `0xAA` byte as the start of a packet and anything else as a text line up to `\n`. **Firmware must never print text while a packet is being written** (see `send_data()`), or framing breaks.
 
 `TONE` holds `PING_PIN` on as a continuous `PING_FREQUENCY` square wave (for scope debugging of the drive and receive chain) until STOP or START. The port must stay open while it runs, because reopening it resets the ESP32.
+
+`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until reset, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length until reset. The packet header carries neither, so whoever sends them must record them.
 
 ### Ping packet format
 
@@ -109,6 +114,7 @@ The burst length, not transducer ringing, sets range resolution. Use an echo's *
 
 - **Supply isolation matters most in the analog front end.** Keep the speaker amp on its own supply, keep the preamp supply filtered (22 Ω + 100 µF + 0.1 µF at its pins), use a single-point ground, and re-run `bench/run_test.py ... crosstalk` after any wiring change.
 - The fitted preamp is an AD828. Profile `ad828-v1` (93 counts/mV, 37.5 dB, −3 dB band 75 Hz–5.1 kHz, ~1 count RMS noise) predates the 40 kHz conversion: the feedback caps across the 20 kΩ resistors are now 130 pF (~61 kHz pole per stage, ~−3 dB at 40 kHz for both), and the electret bias network has been removed. The receive element is loaded directly by the 2.2 kΩ input resistor.
+- The transducers' two-way steady-state response peaks at 40.0 kHz, with a −3 dB band of 39.2–41.0 kHz (1.8 kHz; profile `sweep-2026-10-22-50cyc`). That limits range resolution to ~10 cm whatever the waveform, so chirps and deconvolution have little to gain.
 - The hardware build is fragile. If the data looks physically implausible (noise, drift, gain, oscillation) but framing is clean (`ping_id` continuous, no resync warnings), suspect the hardware or wiring before the code.
 
 ## Test results across machines

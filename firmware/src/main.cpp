@@ -45,10 +45,16 @@ int16_t data_buffer[BUFFER_SIZE];
 // 200 kHz gives 5 samples per 40 kHz cycle, puts Nyquist well above the
 // preamp's ~61 kHz poles, and keeps sample_dt_us an exact integer (5 us).
 #define ADC_SAMPLE_FREQ_HZ 200000 // 200 kHz continuous-mode sample rate
-// sample_dt_us (header) and emit_burst()'s periodUs are whole microseconds;
-// a rate that doesn't divide 1 MHz would silently skew every range axis.
+// sample_dt_us (header) is whole microseconds; a rate that doesn't divide
+// 1 MHz would silently skew every range axis.
 static_assert(1000000 % ADC_SAMPLE_FREQ_HZ == 0, "ADC_SAMPLE_FREQ_HZ must give a whole-us sample period");
-static_assert(1000000 % PING_FREQUENCY == 0, "PING_FREQUENCY must give a whole-us period");
+// FREQ <hz> accepts drive frequencies in this range (for frequency sweeps).
+#define PING_FREQ_MIN_HZ 30000
+#define PING_FREQ_MAX_HZ 50000
+// CYCLES <n> accepts burst lengths in this range (long bursts measure the
+// transducers' steady-state response).
+#define PING_CYCLES_MIN 1
+#define PING_CYCLES_MAX 200
 // Bytes per ADC continuous-mode DMA frame (must be a multiple of
 // SOC_ADC_DIGI_RESULT_BYTES, 4 on ESP32). Kept well under the ~4092 byte
 // single-descriptor ceiling used elsewhere in the Arduino core's ADC
@@ -75,7 +81,13 @@ struct __attribute__((packed)) PingHeader {
 
 uint32_t ping_id = 0;
 bool ping_enabled = false;
-bool tone_enabled = false; // continuous PING_FREQUENCY on PING_PIN, for scope debugging
+bool tone_enabled = false; // continuous ping_frequency_hz on PING_PIN, for scope debugging
+// Drive frequency: PING_FREQUENCY at boot, changed by FREQ <hz> until reset.
+// Holds the LEDC's actual frequency, which can differ from the request by a
+// few Hz (its clock divider is quantized).
+uint32_t ping_frequency_hz = PING_FREQUENCY;
+// Burst length: PING_CYCLES at boot, changed by CYCLES <n> until reset.
+uint16_t ping_cycles = PING_CYCLES;
 String serial_command_buffer;
 
 adc_continuous_handle_t adc_handle = NULL;
@@ -243,6 +255,29 @@ void handle_serial_command(const String &command) {
         tone_enabled = true;
         ledcWrite(PING_PIN, PING_DUTY);
         Serial.println("TONE command received: continuous tone on PING_PIN");
+    } else if (normalized.length() > 5 && normalized.substring(0, 5).equalsIgnoreCase("FREQ ")) {
+        long requested = normalized.substring(5).toInt();
+        if (requested < PING_FREQ_MIN_HZ || requested > PING_FREQ_MAX_HZ) {
+            Serial.printf("FREQ rejected: %ld Hz outside %d-%d Hz\n", requested, PING_FREQ_MIN_HZ, PING_FREQ_MAX_HZ);
+            return;
+        }
+        uint32_t actual = ledcChangeFrequency(PING_PIN, (uint32_t)requested, PING_RESOLUTION);
+        if (actual == 0) {
+            Serial.printf("FREQ failed: LEDC could not set %ld Hz\n", requested);
+            return;
+        }
+        ping_frequency_hz = actual;
+        // A running TONE picks up the new frequency; keep its duty set.
+        ledcWrite(PING_PIN, tone_enabled ? PING_DUTY : 0);
+        Serial.printf("FREQ set: requested %ld Hz, actual %lu Hz\n", requested, (unsigned long)actual);
+    } else if (normalized.length() > 7 && normalized.substring(0, 7).equalsIgnoreCase("CYCLES ")) {
+        long requested = normalized.substring(7).toInt();
+        if (requested < PING_CYCLES_MIN || requested > PING_CYCLES_MAX) {
+            Serial.printf("CYCLES rejected: %ld outside %d-%d\n", requested, PING_CYCLES_MIN, PING_CYCLES_MAX);
+            return;
+        }
+        ping_cycles = (uint16_t)requested;
+        Serial.printf("CYCLES set: %u\n", (unsigned)ping_cycles);
     }
 }
 
@@ -265,35 +300,37 @@ void process_commands() {
 
 // Emits the burst and returns esp_timer_get_time() at its true start.
 //
-// PING_PIN free-runs as a hardware square wave at PING_FREQUENCY (configured
-// in setup()), so the tone is generated entirely by the LEDC peripheral - no
+// PING_PIN free-runs as a hardware square wave at ping_frequency_hz (set in
+// setup() or by FREQ), so the tone is generated entirely by the LEDC peripheral - no
 // per-half-cycle software toggling needed.
 //
 // A duty change only takes effect at the next PWM period boundary, so on the
 // free-running timer the burst would start anywhere from 0 to 1 period
-// (25 us) after the ledcWrite() call, at a different point every ping.
+// (25 us at 40 kHz) after the ledcWrite() call, at a different point every ping.
 // That random start scrambles the echo's phase against the ADC window and
 // defeats coherent (waveform) averaging across pings. Resetting the timer
 // first puts the counter at 0, so the first boundary is exactly one period
 // later every time: burst start = reset + 1 period, deterministically. The
-// off write is timed to latch half a period past the PING_CYCLES-th
-// boundary, giving exactly PING_CYCLES whole cycles.
+// off write is timed to latch half a period past the ping_cycles-th
+// boundary, giving exactly ping_cycles whole cycles. Timing is in ns: at a
+// swept frequency such as 40250 Hz the period (24.84 us) isn't whole us, and
+// truncating it would land the off write past the next boundary (11 cycles).
 int64_t emit_burst() {
-    const uint32_t periodUs = 1000000UL / PING_FREQUENCY;
-    const uint32_t offDelayUs = periodUs * PING_CYCLES + periodUs / 2;
+    const uint32_t periodNs = 1000000000UL / ping_frequency_hz;
+    const int64_t offDelayNs = (int64_t)periodNs * ping_cycles + periodNs / 2;
 
     int64_t t_reset = esp_timer_get_time();
     ledc_timer_rst(LEDC_HIGH_SPEED_MODE, LEDC_TIMER_0);
     ledcWrite(PING_PIN, PING_DUTY);
 
     // Busy-wait to the off point, measured from the reset.
-    while ((uint32_t)(esp_timer_get_time() - t_reset) < offDelayUs) {
+    while ((esp_timer_get_time() - t_reset) * 1000 < offDelayNs) {
     }
 
     // End with the output quiet (latches at the next boundary).
     ledcWrite(PING_PIN, 0);
 
-    return t_reset + periodUs;
+    return t_reset + (periodNs + 500) / 1000;
 }
 
 void setup() {
