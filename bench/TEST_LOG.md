@@ -9,6 +9,53 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
+## 2026-10-22 (starfish) — conversion to 40 kHz piezo transducers
+
+**Hardware:** transmit is an 11-element array of 40T-12 piezos (~25 mm average
+spacing, staggered unevenly to blur sidelobes), driven through the audio amp;
+receive is a single 40R-12. Preamp: the AD828's 20 kΩ feedback caps went from
+1 nF to 130 pF (~61 kHz pole per stage), and the electret bias network was
+removed. The 40R-12 sees the 2.2 kΩ input resistor directly.
+Firmware (commits `42ebfd8`, `345fd9b`, `08c9812`): 40 kHz, 10-cycle burst,
+ADC at 200 kHz, 4096 samples/ping (~3.5 m), 300 ms interval; new `TONE` command
+(continuous 40 kHz on GPIO25).
+
+**Captures:** none kept. The runs went to `pc/sensor_stream.csv`, which each run
+overwrote, plus session scratch files.
+
+**Results:**
+- **First run, no signal:** noise ~1 count RMS (ADC floor), flat spectrum, no
+  direct sound. Cause: the speaker amp's power (fixed by the user). The same
+  symptom as the 2026-10-14 amp-supply failure.
+- **Amp powered:** spectrum peak 40.04 kHz; ping-locked ~10 counts RMS against
+  1.8 counts residual; raw ±75 counts. Direct path at 20-40 cm; echoes at
+  ~255 cm (+31 dB) and ~300 cm.
+- **After the user fixed a preamp fault** (found with `TONE` and a scope): raw
+  ±360 counts (1458-2177). Direct path +19 dB; strongest returns at 280-360 cm
+  (+24 dB); 240-260 cm +12 dB.
+- **ADC at 200 kHz:**
+  - The pair un-swap is still correct: the 60 kHz image is −27.5 dB re 40 kHz
+    (a wrong swap would put it at +9.8 dB).
+  - With the zero-glitch repair disabled, there were 0 exact-zero samples in 96
+    raw pings, so the repair was removed.
+- **Start-of-run corrupted packet: solved.** `receive.py` slept 0.1 s after START
+  before reading. With 8 KB packets, ~4.7 KB of buffering overflowed and one byte
+  dropped; that misaligned packet 1 and destroyed packet 2's sync. The START
+  before the read loop now has no settle sleep (also in `bench/capture.py`).
+  0 bad packets since.
+- **Live echogram dimming: fixed.** A strong close return (pings 334-340, raw
+  223-3620) was 28 dB above typical. The all-time-peak scaling then held
+  everything else 22-29 dB down. Scaling is now to the visible window's peak;
+  checked live by the user.
+
+**Decisions (user):** 200 kHz sampling rather than 150 kHz. 150 kHz isn't a whole
+number of µs per sample, and its Nyquist sits near the preamp poles. Remove the
+glitch repair. A MOSFET-input buffer ahead of the preamp is deferred; see how the
+2.2 kΩ load performs first.
+
+**Last observation:** the final recordings swung only 1733-1886 (±70) against
+±360 after the preamp fix. Possibly just the aim/scene; not investigated.
+
 ## 2026-10-14 (laptop) — two-target resolution test; Wiener decision
 
 **Hardware:** speaker amp on its own 5 V supply (it died twice during the session
@@ -73,7 +120,13 @@ reverberation pile up, hence the 300 ms interval.
 ## Open items (update as they close)
 
 - ADC frame-boundary glitches every 256 samples (−10..−20 counts, ping-locked):
-  consider a firmware fix.
-- Start-of-run corrupted packet (`ping_id` gap) in `receive.py`: uninvestigated.
+  consider a firmware fix. Measured at 100 kHz; not rechecked at 200 kHz.
 - Bench T3 linearity (clip level): needs the injection pad back.
 - A third target distance (~1 m, where the echo overlaps the direct-sound tail).
+- Re-profile the preamp with the 130 pF caps (bench defaults are now 40 kHz /
+  35-45 kHz); `ad828-v1` predates the change.
+- Verify 40 kHz ranging against a measured target with `bench/echo_onset.py`.
+  Its timing windows were sized for the 3.3 kHz burst.
+- Signal down from ±360 to ±70 counts late on 2026-10-22: check aim, preamp
+  and wiring.
+- MOSFET-input buffer for the 40R-12 (2.2 kΩ load costs ~6-9 dB per the datasheet).
