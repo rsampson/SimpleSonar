@@ -16,8 +16,9 @@ Amplitudes come from demodulating the coherent (ping-locked) mean at the
 drive frequency: the burst is phase-locked to the capture, so averaging
 pings keeps the echo and suppresses noise. Raw captures go to
 profiles/NAME/raw/sweep_<hz>.csv (gitignored); results to profile.json,
-response.npz and freq_sweep.png. The firmware is left at --stop afterwards;
-reopen the port (which resets the ESP32) to return to PING_FREQUENCY.
+response.npz and freq_sweep.png. The firmware is sent RESET at the end (also
+if interrupted), restoring PING_FREQUENCY and PING_CYCLES: reopening the port
+doesn't reliably reboot the ESP32, so the last step's settings would persist.
 
 The default 10-cycle burst spans ~3.6 kHz itself, so its sweep is the
 response to the burst actually used, smoothed by that width. --cycles 50
@@ -107,15 +108,16 @@ def target_range_cm(x, fs_hz, t0_ms, target_m, k=8):
     return None if o is None else o * C / 2 * 0.1
 
 
-def _command(ser, name, value, timeout_s=2.0):
-    """Send '<name> <value>' and return the firmware's '<name> set...' reply."""
+def _command(ser, text, ok_prefix, timeout_s=2.0):
+    """Send a command line and return the firmware's reply starting with ok_prefix."""
+    name = text.split()[0]
     ser.reset_input_buffer()
-    ser.write(f'{name} {int(value)}\n'.encode())
+    ser.write(f'{text}\n'.encode())
     ser.flush()
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         line = ser.readline().decode(errors='replace').strip()
-        if line.startswith(f'{name} set'):
+        if line.startswith(ok_prefix):
             return line
         if line.startswith(name):
             raise RuntimeError(f"firmware: {line}")
@@ -124,12 +126,17 @@ def _command(ser, name, value, timeout_s=2.0):
 
 def set_frequency(ser, f_hz):
     """Send FREQ and return the firmware's actual frequency (Hz)."""
-    return float(_command(ser, 'FREQ', f_hz).rsplit('actual', 1)[1].split()[0])
+    return float(_command(ser, f'FREQ {int(f_hz)}', 'FREQ set').rsplit('actual', 1)[1].split()[0])
 
 
 def set_cycles(ser, cycles):
     """Send CYCLES (burst length) and confirm it."""
-    _command(ser, 'CYCLES', cycles)
+    _command(ser, f'CYCLES {int(cycles)}', 'CYCLES set')
+
+
+def reset_drive(ser):
+    """Send RESET (default frequency and burst length) and return the reply."""
+    return _command(ser, 'RESET', 'RESET done')
 
 
 def plot(path, points, summary):
@@ -188,6 +195,7 @@ def main():
                   f"direct {p['direct_amp_counts']:7.1f}, clipped {p['clip_fraction']:.4f}")
     finally:
         if ser is not None:
+            print(f"  {reset_drive(ser)}")
             ser.close()
 
     summary = summarize(points)

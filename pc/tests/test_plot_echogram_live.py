@@ -1,6 +1,6 @@
 import pytest
 
-from plot_echogram_live import new_live_state, tail_new_packets
+from plot_echogram_live import new_live_state, tail_new_packets, update_reference
 
 HEADER = "Timestamp,PingID,T_ping_us,T_sample_us,NumSamples,SampleDt_us,Int_0,Int_1\r\n"
 
@@ -107,3 +107,21 @@ def test_mismatched_header_after_reset_raises(tmp_path):
 
     with pytest.raises(ValueError):
         tail_new_packets(str(path), state)
+
+
+def test_reference_jumps_up_to_a_stronger_ping():
+    assert update_reference(100.0, 2500.0) == 2500.0
+
+
+def test_reference_relaxes_1_db_per_ping_but_not_below_current_ping():
+    assert update_reference(1000.0, 10.0, decay_db=1.0) == pytest.approx(1000.0 * 10 ** (-1 / 20))
+    assert update_reference(1000.0, 990.0, decay_db=1.0) == 990.0
+
+
+def test_reference_recovers_from_a_28_db_transient_in_about_28_pings():
+    typical, ref = 100.0, 100.0 * 10 ** (28 / 20)   # right after the transient
+    pings = 0
+    while ref > typical:
+        ref = update_reference(ref, typical, decay_db=1.0)
+        pings += 1
+    assert 27 <= pings <= 29

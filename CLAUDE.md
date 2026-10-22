@@ -59,9 +59,9 @@ With the mic removed, a bench generator drives the mic node through a ÷1000 (or
 
 Packets, debug text, and START/STOP/TONE commands share **one** `Serial` port at 921600 baud (`SERIAL_BAUD` in `firmware/src/main.cpp` must match `BAUD_RATE` in `pc/receive.py`). `receive.py` treats a leading `0xAA` byte as the start of a packet and anything else as a text line up to `\n`. **Firmware must never print text while a packet is being written** (see `send_data()`), or framing breaks.
 
-`TONE` holds `PING_PIN` on as a continuous `PING_FREQUENCY` square wave (for scope debugging of the drive and receive chain) until STOP or START. The port must stay open while it runs, because reopening it resets the ESP32.
+`TONE` holds `PING_PIN` on as a continuous `PING_FREQUENCY` square wave (for scope debugging of the drive and receive chain) until STOP or START. Keep the port open while it runs. Opening the port doesn't reliably reboot the ESP32 on this adapter (`ping_id` continues across sessions), so don't count on a reopen to clear anything.
 
-`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until reset, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length until reset. The packet header carries neither, so whoever sends them must record them.
+`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them. `RESET` restores `PING_FREQUENCY` and `PING_CYCLES` (and stops `TONE`). `receive.py` sends it before START, so normal pinging always uses the defaults; `freq_sweep.py` sends it when it finishes.
 
 ### Ping packet format
 

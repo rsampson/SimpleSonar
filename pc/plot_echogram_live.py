@@ -19,11 +19,18 @@ POLL_INTERVAL_S = 0.05
 # session length. ~60s of history at the 300ms ping interval.
 WINDOW_PINGS = 200
 
-# Display in dB below the strongest echo in the visible window (so a
-# strong transient fades back out once it scrolls off). Kept separate from
-# plot_echogram.py's constant of the same name/value since a user may
-# reasonably want a different setting for live tuning vs. offline review.
+# Display in dB below a reference that tracks the strongest recent echo.
+# Kept separate from plot_echogram.py's constant of the same name/value since
+# a user may reasonably want a different setting for live tuning vs. offline
+# review.
 DYNAMIC_RANGE_DB = 40
+
+# The reference jumps up at once to a stronger ping (nothing new clips) and
+# otherwise relaxes by this much per ping, so after a strong transient (a
+# hand in the beam) the display recovers in ~(its excess dB / this) pings:
+# 28 dB in ~28 pings (~8 s) at 1 dB. Higher recovers faster but lets the
+# brightness pump with ordinary ping-to-ping variation.
+REFERENCE_DECAY_DB_PER_PING = 1.0
 
 CM_PER_FOOT = 30.48
 
@@ -50,7 +57,13 @@ def reset_echogram_state(state):
         'ping_times': [],
         'ping_ids': [],
         'total_pings_seen': 0,
+        'reference': 0.0,
     })
+
+
+def update_reference(reference, ping_peak, decay_db=REFERENCE_DECAY_DB_PER_PING):
+    """Fast-attack, slow-release display reference (see REFERENCE_DECAY_DB_PER_PING)."""
+    return max(ping_peak, reference * 10 ** (-decay_db / 20))
 
 
 def tail_new_packets(path, state):
@@ -129,6 +142,7 @@ def process_new_packets(new_packets, live_state):
         live_state['columns'].append(env)
         live_state['ping_times'].append(meta['T_ping_us'] / 1e6)
         live_state['ping_ids'].append(meta['PingID'])
+        live_state['reference'] = update_reference(live_state['reference'], np.nanmax(env))
         live_state['total_pings_seen'] += 1
 
         if len(live_state['columns']) > WINDOW_PINGS:
@@ -170,7 +184,7 @@ def init_plot(live_state):
     ax_ft.set_ylabel("Range (ft)")
 
     cbar = fig.colorbar(mesh, ax=ax)
-    cbar.set_label("Echo strength (dB re: strongest return in window)")
+    cbar.set_label("Echo strength (dB re: recent strongest return)")
 
     fig.tight_layout()
     fig.show()
@@ -179,8 +193,7 @@ def init_plot(live_state):
 
 def redraw(fig, ax, mesh, live_state):
     image = make_window_image(live_state)
-    peak = np.nanmax(image) if np.isfinite(image).any() else 0.0
-    peak = peak if peak > 0 else 1.0
+    peak = live_state['reference'] if live_state['reference'] > 0 else 1.0
     with np.errstate(divide='ignore', invalid='ignore'):
         db = 20 * np.log10(image / peak)
     mesh.set_array(db.ravel())

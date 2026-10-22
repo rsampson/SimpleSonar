@@ -19,6 +19,7 @@ SERIAL_PORT_CANDIDATES = ['/dev/ttyUSB0', '/dev/ttyUSB1']
 BAUD_RATE = 921600           # must match Serial baud rate set in firmware (SERIAL_BAUD)
 OUTPUT_FILE = 'sensor_stream.csv'
 START_COMMAND = b'START\n'
+RESET_COMMAND = b'RESET\n'  # default drive frequency and burst length
 STOP_COMMAND = b'STOP\n'
 
 NUM_SAMPLES = 4096  # must match BUFFER_SIZE in firmware
@@ -257,7 +258,7 @@ def _probe_port(port, timeout_s=3.0):
         return None
 
     try:
-        time.sleep(2)  # let the ESP32 finish rebooting before talking to it
+        time.sleep(2)  # in case the open rebooted the ESP32 (not every adapter does)
         ser.reset_input_buffer()
         send_control_command(ser, START_COMMAND)
 
@@ -293,7 +294,7 @@ def _probe_port(port, timeout_s=3.0):
 
 def find_sonar_port():
     """Probe SERIAL_PORT_CANDIDATES and return (port, ser) for the one
-    running sonar firmware, with `ser` already open, reset, and verified,
+    running sonar firmware, with `ser` already open and verified,
     but idle (pinging stopped again after the probe - see _probe_port()).
     The caller is responsible for sending START once it's ready to read.
 
@@ -358,7 +359,7 @@ def needs_header(path, fresh):
 
 
 def continuous_serial_to_csv(fresh=False):
-    # Checked before the port is opened, which resets the ESP32.
+    # Checked before the port is opened, which may reboot the ESP32.
     write_header = needs_header(OUTPUT_FILE, fresh)
     _install_interrupt_handler()
 
@@ -367,13 +368,13 @@ def continuous_serial_to_csv(fresh=False):
         print(f"Connecting to {SERIAL_PORT} at {BAUD_RATE} baud...")
         ser = serial.Serial(SERIAL_PORT, baudrate=BAUD_RATE, timeout=2) # 2s timeout gives leeway for 1s intervals
 
-        # Opening the port toggles DTR/RTS, which resets the ESP32. Give it
-        # time to finish rebooting and reach loop() before we talk to it,
+        # Opening the port toggles DTR/RTS, which can reset the ESP32 (not on
+        # every adapter). Give it time to reach loop() before we talk to it,
         # otherwise the START command below is sent into the bootloader and lost.
         time.sleep(2)
         ser.reset_input_buffer()
     else:
-        # Auto-detect: find_sonar_port() already opened, reset, and verified
+        # Auto-detect: find_sonar_port() already opened and verified
         # the port, then stopped pinging again - reuse that same connection
         # rather than reopening (see _probe_port()) and send our own START
         # below, right before we're ready to read, same as the explicit-port
@@ -399,6 +400,9 @@ def continuous_serial_to_csv(fresh=False):
             # its own, but starting clean avoids that entirely). No settle
             # sleep either: the first 8 KB packet starts ~21 ms after START,
             # and ~4.7 KB unread (tty buffer + USB-serial FIFO) drops a byte.
+            # The port open doesn't reliably reboot the ESP32, so clear any
+            # FREQ/CYCLES left from a bench sweep first.
+            send_control_command(ser, RESET_COMMAND)
             send_control_command(ser, START_COMMAND, settle_s=0)
             print(f"Sent start command to ESP32: {START_COMMAND.decode().strip()}")
             print(f"Streaming data into {OUTPUT_FILE}. Press Ctrl+C to stop.\n")

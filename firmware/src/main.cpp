@@ -82,11 +82,11 @@ struct __attribute__((packed)) PingHeader {
 uint32_t ping_id = 0;
 bool ping_enabled = false;
 bool tone_enabled = false; // continuous ping_frequency_hz on PING_PIN, for scope debugging
-// Drive frequency: PING_FREQUENCY at boot, changed by FREQ <hz> until reset.
+// Drive frequency: PING_FREQUENCY at boot or after RESET, changed by FREQ <hz>.
 // Holds the LEDC's actual frequency, which can differ from the request by a
 // few Hz (its clock divider is quantized).
 uint32_t ping_frequency_hz = PING_FREQUENCY;
-// Burst length: PING_CYCLES at boot, changed by CYCLES <n> until reset.
+// Burst length: PING_CYCLES at boot or after RESET, changed by CYCLES <n>.
 uint16_t ping_cycles = PING_CYCLES;
 String serial_command_buffer;
 
@@ -278,6 +278,19 @@ void handle_serial_command(const String &command) {
         }
         ping_cycles = (uint16_t)requested;
         Serial.printf("CYCLES set: %u\n", (unsigned)ping_cycles);
+    } else if (normalized.equalsIgnoreCase("RESET")) {
+        // Back to the compiled-in drive settings. Opening the serial port
+        // doesn't reliably reboot the ESP32, so FREQ/CYCLES from an earlier
+        // session would otherwise carry into normal pinging. Pinging itself
+        // is left as it was; a running TONE stops.
+        tone_enabled = false;
+        uint32_t actual = ledcChangeFrequency(PING_PIN, PING_FREQUENCY, PING_RESOLUTION);
+        ledcWrite(PING_PIN, 0);
+        if (actual != 0) {
+            ping_frequency_hz = actual;
+        }
+        ping_cycles = PING_CYCLES;
+        Serial.printf("RESET done: %lu Hz, %u cycles\n", (unsigned long)ping_frequency_hz, (unsigned)ping_cycles);
     }
 }
 

@@ -111,9 +111,10 @@ tape). It warns if any capture clipped: clipping flattens the peak, so back
 off the volume or move the board further away and rerun.
 
 Results go to `profile.json` (`freq_sweep`), `response.npz` (`sweep_*`) and
-`freq_sweep.png`; raw captures to `raw/sweep_<hz>.csv`. The firmware is left
-at the last frequency until the port is reopened (which resets it to
-`PING_FREQUENCY`).
+`freq_sweep.png`; raw captures to `raw/sweep_<hz>.csv`. At the end, even if
+interrupted, the script sends `RESET`, which returns the firmware to
+`PING_FREQUENCY` and `PING_CYCLES`. Reopening the port doesn't reliably reboot
+the ESP32, so without that the last step's settings would carry over.
 
 ## Output
 
