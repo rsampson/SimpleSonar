@@ -118,8 +118,9 @@ the ESP32, so without that the last step's settings would carry over.
 
 ## Wi-Fi interference (branch `esp32-wifi-ap`)
 
-`wifi_ab.py` checks whether the ESP32's Wi-Fi adds noise. Over USB it
-alternates `WIFI OFF` and `WIFI ON` (`--rounds`, default 2) and captures
+`wifi_ab.py` checks whether the ESP32's Wi-Fi adds noise. The AP is on at
+boot, so the script starts with `WIFI OFF`. Over USB it alternates `WIFI OFF`
+and `WIFI ON` (`--rounds`, default 2) and captures
 `--pings` (60) in each state, with the transducers in their normal setup.
 
 While Wi-Fi is on, the radio has to carry real traffic. Join the tablet to the

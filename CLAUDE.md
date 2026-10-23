@@ -35,6 +35,7 @@ python plot_matched_filter.py  # raw + matched-filter view, ←/→ to navigate
 python plot_echogram.py        # full-recording waterfall echogram
 python plot_echogram_live.py   # live echogram; run alongside receive.py
 python run_pipeline.py         # receive.py → plot_echogram.py → plot_matched_filter.py
+python web_preview.py          # the ESP32's web echogram page at http://localhost:8000, replaying sensor_stream.csv
 
 pytest                         # pc/tests/ (also `pytest pc/` from repo root)
 ```
@@ -62,7 +63,14 @@ Packets, debug text, and START/STOP/TONE commands share **one** `Serial` port at
 
 `TONE` holds `PING_PIN` on as a continuous `PING_FREQUENCY` square wave (for scope debugging of the drive and receive chain) until STOP or START. Keep the port open while it runs. Opening the port doesn't reliably reboot the ESP32 on this adapter (`ping_id` continues across sessions), so don't count on a reopen to clear anything.
 
-`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them. `WIFI ON|OFF|STATUS` (branch `esp32-wifi-ap`) starts or stops an open access point, SSID `SimpleSonar` (off at boot), with a TCP bridge on `192.168.4.1:3333`. A bridge client gets the same byte stream as the UART and can send the same commands, so `receive.py --port socket://192.168.4.1:3333` works over Wi-Fi. All firmware output goes through `out`, which writes to both. starfish's Wi-Fi is its only internet connection, so use the tablet as the Wi-Fi client, not starfish.
+`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them. ### Wi-Fi and the web echogram (branch `esp32-wifi-ap`)
+
+At boot the ESP32 starts an open access point, SSID `SimpleSonar`, and starts pinging (`PING_AUTOSTART`), so on a battery it runs with no PC. Join the network and open `http://192.168.4.1` for the live echogram. `WIFI ON|OFF|STATUS` switches the AP at run time (`wifi_start()`/`wifi_stop()`).
+
+- **TCP bridge, `192.168.4.1:3333`:** a client gets the same byte stream as the UART and can send the same commands, so `receive.py --port socket://192.168.4.1:3333` works over Wi-Fi. All firmware output goes through `out`, which writes to both.
+- **Web server, port 80** (ESP-IDF `esp_http_server`): `GET /` serves `firmware/src/web_page.h`; `GET /config` returns the drive settings as JSON; the `/ws` WebSocket sends each ping as one binary message (the packet, byte for byte) and takes text commands (START, STOP). Handlers run on the server's task: commands are queued for `loop()`, and pings go out via `httpd_queue_work()`. A ping still being sent to a slow browser makes the next one skip the browsers (the UART and bridge always get it); a client stalled for over 1 s is dropped. Up to `WEB_MAX_CLIENTS` (4) sessions.
+- **The page** (`web_page.h`) does the processing of `plot_echogram_live.py` in the browser: matched filter, Hilbert envelope, near-range blanking, 40 dB scale with the 1 dB/ping reference. Its `<script id="dsp">` block is pure functions that `pc/tests/test_web_page_dsp.py` runs under Node against the Python versions; keep the two in step. `pc/web_preview.py` serves the same page on a PC, fed from a recording, for developing it without the AP.
+- starfish's Wi-Fi is its only internet connection, so use the tablet as the Wi-Fi client, not starfish. Android won't rejoin a network without internet by itself after it drops.
 
 `RESET` restores `PING_FREQUENCY` and `PING_CYCLES` (and stops `TONE`). `receive.py` sends it before START, so normal pinging always uses the defaults; `freq_sweep.py` sends it when it finishes.
 

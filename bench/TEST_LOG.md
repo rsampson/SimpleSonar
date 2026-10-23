@@ -9,6 +9,30 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
+## 2026-10-22 (starfish, host) — web echogram on the tablet (branch `esp32-wifi-ap`)
+
+**Setup:** firmware brings up the `SimpleSonar` AP and starts pinging at boot.
+It serves the echogram page at `http://192.168.4.1` and sends pings over the
+`/ws` WebSocket. Sonar on starfish's USB power. Android tablet browser as the
+client.
+
+**Results:**
+- **The page ran on the tablet for a long time, then froze.** Over USB, the
+  firmware was barely running: no pings in 10 s, and `WIFI STATUS` took 14 s
+  to answer, with a bridge client connected. Cause: the Termux `nc` loop from
+  the A/B test was frozen by Android in the background, so its TCP connection
+  stayed open but unread. `WiFiClient::write()` retries for up to 10 s per
+  call, and the bridge write runs in the ping loop.
+- **Fix:** bridge writes are non-blocking with a 250 ms limit, and a client
+  that can't keep up is dropped. Reproduced deliberately (`nc` then Ctrl+Z on
+  the tablet): the page kept scrolling, and USB showed 3.3-3.4 pings/s with no
+  gaps over 20 s. The bridge client was dropped and the web client stayed
+  connected.
+- **Off the tablet:** the page was also checked in headless Chrome on starfish
+  via `pc/web_preview.py`: 148 pings in 40 s, none missed, no JS errors,
+  Stop/Start round trip, portrait layout. `pc/tests/test_web_page_dsp.py` runs
+  the page's DSP under Node and matches the Python tools.
+
 ## 2026-10-22 (starfish, host) — Wi-Fi interference A/B (branch `esp32-wifi-ap`)
 
 **Hardware:** as in the sweep entry below, but the target was removed and the
@@ -203,4 +227,5 @@ reverberation pile up, hence the 300 ms interval.
 - MOSFET-input buffer for the 40R-12 (2.2 kΩ load costs ~6-9 dB per the datasheet).
 - Wi-Fi on battery power (separate regulators for preamp and amp): repeat the
   A/B with data over the bridge (branch `esp32-wifi-ap`).
+- Long unattended tablet run of the web echogram since the bridge-write fix.
 - The ~27-count non-repeating out-of-band peak in every ping (Wi-Fi off too).

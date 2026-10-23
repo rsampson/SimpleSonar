@@ -5,6 +5,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <WiFi.h>
+#include <esp_http_server.h>
+#include <lwip/sockets.h>
+#include <errno.h>
+#include "web_page.h"
 
 #define BUFFER_SIZE 4096 // 4096 int16_t integers = 8192 bytes (8 KB), ~20 ms at 200 kHz
 int16_t data_buffer[BUFFER_SIZE];
@@ -67,12 +71,25 @@ static_assert(1000000 % ADC_SAMPLE_FREQ_HZ == 0, "ADC_SAMPLE_FREQ_HZ must give a
 // 8KB payload would take ~700ms; at 921600 it takes ~90ms.
 #define SERIAL_BAUD 921600
 
-// WIFI ON starts an open access point and a TCP bridge: a client on
-// BRIDGE_PORT gets the same byte stream as the UART (packets and text) and
-// can send the same commands, so pyserial's socket://192.168.4.1:3333 URL
-// works wherever a serial port does. Off at boot.
+// At boot (and on WIFI ON) the ESP32 runs an open access point with:
+// - a TCP bridge on BRIDGE_PORT: a client gets the same byte stream as the
+//   UART (packets and text) and can send the same commands, so pyserial's
+//   socket://192.168.4.1:3333 URL works wherever a serial port does;
+// - a web server on port 80: GET / is the live echogram page (web_page.h),
+//   GET /config the drive settings as JSON, and the /ws WebSocket sends each
+//   ping as one binary message (the packet, byte for byte) and takes text
+//   commands (START, STOP).
+// Pinging starts at boot too, so on a battery the sonar runs with no PC.
 #define WIFI_AP_SSID "SimpleSonar"
 #define BRIDGE_PORT 3333
+// Longest a bridge write may take before the client is dropped. The TCP send
+// buffer (~5.7 KB) is smaller than a packet, so a healthy client needs a few
+// ms per packet; one that has stopped reading (e.g. a phone app frozen in the
+// background) would otherwise stall the ping loop for seconds per write.
+#define BRIDGE_WRITE_TIMEOUT_US 250000
+#define PING_AUTOSTART true
+#define WEB_MAX_CLIENTS 4       // browser sessions (each uses an lwIP socket)
+#define WEB_COMMAND_MAX 32      // longest WebSocket command accepted
 
 // Packet header sent ahead of each data_buffer payload. Timestamps are
 // esp_timer_get_time() microseconds (monotonic since boot, not wall-clock),
@@ -86,6 +103,17 @@ struct __attribute__((packed)) PingHeader {
     uint16_t num_samples;   // BUFFER_SIZE, in case it ever changes
     uint32_t sample_dt_us;  // nominal 1e6 / ADC_SAMPLE_FREQ_HZ, hardware-clocked
 };
+
+// Web server state. WebSocket handlers run on the server's own task, so
+// they queue commands for loop() (which owns `out` and the ping cycle) and
+// pings are sent from that task via httpd_queue_work().
+static httpd_handle_t web_server = NULL;
+static QueueHandle_t web_command_queue = NULL;
+static volatile bool ws_send_busy = false;  // a ping is still going out
+static uint8_t ws_frame_buf[sizeof(PingHeader) + BUFFER_SIZE * sizeof(int16_t)];
+static bool wifi_start();
+static void wifi_stop();
+static int ws_client_count();
 
 uint32_t ping_id = 0;
 bool ping_enabled = false;
@@ -103,6 +131,29 @@ bool wifi_enabled = false;
 WiFiServer bridge_server(BRIDGE_PORT);
 WiFiClient bridge_client;
 
+// Sends to the bridge client without blocking for long: WiFiClient::write()
+// retries for up to 10 s, which a client that stops reading turns into a
+// stalled ping loop. A client that can't take `size` bytes within
+// BRIDGE_WRITE_TIMEOUT_US is dropped (its stream would be broken anyway).
+static void bridge_write(const uint8_t *buf, size_t size) {
+    const int fd = bridge_client.fd();
+    const int64_t deadline = esp_timer_get_time() + BRIDGE_WRITE_TIMEOUT_US;
+    size_t done = 0;
+    while (done < size) {
+        ssize_t n = send(fd, buf + done, size - done, MSG_DONTWAIT);
+        if (n > 0) {
+            done += n;
+        } else if ((n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) || esp_timer_get_time() > deadline) {
+            break; // connection gone, or too slow
+        } else {
+            vTaskDelay(1);
+        }
+    }
+    if (done < size) {
+        bridge_client.stop();
+    }
+}
+
 // All output - packets and text - goes through `out`: to the UART, and to
 // the TCP bridge client while one is connected, as the same stream.
 class TeeOut : public Print {
@@ -111,7 +162,7 @@ public:
     size_t write(const uint8_t *buf, size_t size) override {
         size_t n = Serial.write(buf, size);
         if (bridge_client && bridge_client.connected()) {
-            bridge_client.write(buf, size);
+            bridge_write(buf, size);
         }
         return n; // the UART's count: it's the link the short-write check guards
     }
@@ -321,35 +372,173 @@ void handle_serial_command(const String &command) {
         ping_cycles = PING_CYCLES;
         out.printf("RESET done: %lu Hz, %u cycles\n", (unsigned long)ping_frequency_hz, (unsigned)ping_cycles);
     } else if (normalized.equalsIgnoreCase("WIFI ON")) {
-        if (!wifi_enabled) {
-            WiFi.mode(WIFI_AP);
-            if (!WiFi.softAP(WIFI_AP_SSID)) { // no password: open network
-                WiFi.mode(WIFI_OFF);
-                out.println("WIFI failed: access point did not start");
-                return;
-            }
-            bridge_server.begin();
-            bridge_server.setNoDelay(true);
-            wifi_enabled = true;
+        if (wifi_start()) {
+            out.printf("WIFI on: SSID %s (open), bridge %s:%d, web http://%s\n", WIFI_AP_SSID,
+                       WiFi.softAPIP().toString().c_str(), BRIDGE_PORT, WiFi.softAPIP().toString().c_str());
+        } else {
+            out.println("WIFI failed: access point did not start");
         }
-        out.printf("WIFI on: SSID %s (open), bridge %s:%d\n", WIFI_AP_SSID,
-                   WiFi.softAPIP().toString().c_str(), BRIDGE_PORT);
     } else if (normalized.equalsIgnoreCase("WIFI OFF")) {
-        // Sent over the bridge, this ends its own connection.
-        if (wifi_enabled) {
-            bridge_client.stop();
-            bridge_server.end();
-            WiFi.softAPdisconnect(true);
-            WiFi.mode(WIFI_OFF);
-            wifi_enabled = false;
-        }
+        // Sent over the bridge or a WebSocket, this ends its own connection.
+        wifi_stop();
         out.println("WIFI off");
     } else if (normalized.equalsIgnoreCase("WIFI STATUS")) {
-        out.printf("WIFI status: %s, %d station(s), bridge client %s\n", wifi_enabled ? "on" : "off",
-                   wifi_enabled ? WiFi.softAPgetStationNum() : 0,
-                   (bridge_client && bridge_client.connected()) ? "connected" : "none");
+        out.printf("WIFI status: %s, %d station(s), bridge client %s, %d web client(s)\n",
+                   wifi_enabled ? "on" : "off", wifi_enabled ? WiFi.softAPgetStationNum() : 0,
+                   (bridge_client && bridge_client.connected()) ? "connected" : "none", ws_client_count());
     }
 }
+
+// --- web server -------------------------------------------------------------
+
+static esp_err_t page_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, WEB_PAGE, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t config_handler(httpd_req_t *req) {
+    char json[160];
+    snprintf(json, sizeof(json),
+             "{\"freq_hz\":%lu,\"cycles\":%u,\"sample_rate_hz\":%d,\"interval_ms\":%d,\"samples\":%d}",
+             (unsigned long)ping_frequency_hz, (unsigned)ping_cycles, ADC_SAMPLE_FREQ_HZ, PING_INTERVAL_MS,
+             BUFFER_SIZE);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t ws_handler(httpd_req_t *req) {
+    if (req->method == HTTP_GET) {
+        return ESP_OK; // handshake (done by the server); pings are pushed by ws_broadcast()
+    }
+    httpd_ws_frame_t frame = {};
+    esp_err_t err = httpd_ws_recv_frame(req, &frame, 0); // length only
+    if (err != ESP_OK || frame.len > WEB_COMMAND_MAX) {
+        return ESP_FAIL; // closes the connection
+    }
+    char cmd[WEB_COMMAND_MAX + 1] = {};
+    frame.payload = (uint8_t *)cmd;
+    if (frame.len > 0 && (err = httpd_ws_recv_frame(req, &frame, frame.len)) != ESP_OK) {
+        return err;
+    }
+    if (frame.type == HTTPD_WS_TYPE_TEXT && frame.len > 0) {
+        xQueueSend(web_command_queue, cmd, 0); // dropped if loop() is that far behind
+    }
+    return ESP_OK;
+}
+
+static int ws_client_count() {
+    if (web_server == NULL) {
+        return 0;
+    }
+    size_t n = WEB_MAX_CLIENTS;
+    int fds[WEB_MAX_CLIENTS];
+    int count = 0;
+    if (httpd_get_client_list(web_server, &n, fds) == ESP_OK) {
+        for (size_t i = 0; i < n; i++) {
+            count += httpd_ws_get_fd_info(web_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET;
+        }
+    }
+    return count;
+}
+
+// Runs on the server's task: sends ws_frame_buf to every WebSocket client.
+static void ws_send_work(void *arg) {
+    size_t n = WEB_MAX_CLIENTS;
+    int fds[WEB_MAX_CLIENTS];
+    if (httpd_get_client_list(web_server, &n, fds) == ESP_OK) {
+        httpd_ws_frame_t frame = {};
+        frame.type = HTTPD_WS_TYPE_BINARY;
+        frame.final = true;
+        frame.payload = ws_frame_buf;
+        frame.len = sizeof(ws_frame_buf);
+        for (size_t i = 0; i < n; i++) {
+            if (httpd_ws_get_fd_info(web_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET &&
+                httpd_ws_send_frame_async(web_server, fds[i], &frame) != ESP_OK) {
+                httpd_sess_trigger_close(web_server, fds[i]); // stalled past send_wait_timeout
+            }
+        }
+    }
+    ws_send_busy = false;
+}
+
+// Queues this ping for the browsers. If the previous one is still going out
+// (a slow client), this ping is skipped for them rather than overwriting
+// the buffer mid-send; the UART and bridge always get every ping.
+static void ws_broadcast(const PingHeader &header) {
+    if (web_server == NULL || ws_send_busy || ws_client_count() == 0) {
+        return;
+    }
+    memcpy(ws_frame_buf, &header, sizeof(header));
+    memcpy(ws_frame_buf + sizeof(header), data_buffer, sizeof(data_buffer));
+    ws_send_busy = true;
+    if (httpd_queue_work(web_server, ws_send_work, NULL) != ESP_OK) {
+        ws_send_busy = false;
+    }
+}
+
+static bool web_start() {
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.max_open_sockets = WEB_MAX_CLIENTS;
+    cfg.send_wait_timeout = 1; // s: a stalled client is dropped, not waited on
+    cfg.lru_purge_enable = true;
+    if (httpd_start(&web_server, &cfg) != ESP_OK) {
+        web_server = NULL;
+        return false;
+    }
+    httpd_uri_t page = {};
+    page.uri = "/";
+    page.method = HTTP_GET;
+    page.handler = page_handler;
+    httpd_register_uri_handler(web_server, &page);
+    httpd_uri_t config = {};
+    config.uri = "/config";
+    config.method = HTTP_GET;
+    config.handler = config_handler;
+    httpd_register_uri_handler(web_server, &config);
+    httpd_uri_t ws = {};
+    ws.uri = "/ws";
+    ws.method = HTTP_GET;
+    ws.handler = ws_handler;
+    ws.is_websocket = true;
+    httpd_register_uri_handler(web_server, &ws);
+    return true;
+}
+
+static bool wifi_start() {
+    if (wifi_enabled) {
+        return true;
+    }
+    WiFi.mode(WIFI_AP);
+    if (!WiFi.softAP(WIFI_AP_SSID)) { // no password: open network
+        WiFi.mode(WIFI_OFF);
+        return false;
+    }
+    bridge_server.begin();
+    bridge_server.setNoDelay(true);
+    if (!web_start()) {
+        out.println("WARNING: web server did not start");
+    }
+    wifi_enabled = true;
+    return true;
+}
+
+static void wifi_stop() {
+    if (!wifi_enabled) {
+        return;
+    }
+    if (web_server != NULL) {
+        httpd_stop(web_server);
+        web_server = NULL;
+        ws_send_busy = false;
+    }
+    bridge_client.stop();
+    bridge_server.end();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+    wifi_enabled = false;
+}
+
+// --- commands ------------------------------------------------------------------
 
 static void read_commands(Stream &in, String &buffer) {
     while (in.available() > 0) {
@@ -370,6 +559,10 @@ static void read_commands(Stream &in, String &buffer) {
 
 void process_commands() {
     read_commands(Serial, serial_command_buffer);
+    char cmd[WEB_COMMAND_MAX + 1];
+    while (web_command_queue != NULL && xQueueReceive(web_command_queue, cmd, 0) == pdTRUE) {
+        handle_serial_command(String(cmd));
+    }
     if (!wifi_enabled) {
         return;
     }
@@ -431,6 +624,12 @@ void setup() {
     pinMode(UNUSED_PIN, INPUT);
 
     init_adc_continuous();
+
+    web_command_queue = xQueueCreate(4, WEB_COMMAND_MAX + 1);
+    if (!wifi_start()) {
+        out.println("WARNING: access point did not start");
+    }
+    ping_enabled = PING_AUTOSTART;
 }
 
 void loop() {
@@ -463,6 +662,7 @@ void loop() {
     capture_samples();
 
     send_data(header);
+    ws_broadcast(header);
 
     // Pad out to PING_INTERVAL_MS, staying responsive to START/STOP.
     while (ping_enabled && (millis() - loop_start_ms) < PING_INTERVAL_MS) {
