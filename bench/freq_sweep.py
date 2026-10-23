@@ -28,13 +28,13 @@ response to the burst actually used, smoothed by that width. --cycles 50
 import argparse
 import os
 import sys
-import time
 
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import analyze  # noqa: E402
 import hw_profile  # noqa: E402
+from capture import send_command  # noqa: E402
 from echo_onset import C, onset  # noqa: E402
 from plot_echogram import hilbert_envelope  # noqa: E402
 
@@ -108,35 +108,19 @@ def target_range_cm(x, fs_hz, t0_ms, target_m, k=8):
     return None if o is None else o * C / 2 * 0.1
 
 
-def _command(ser, text, ok_prefix, timeout_s=2.0):
-    """Send a command line and return the firmware's reply starting with ok_prefix."""
-    name = text.split()[0]
-    ser.reset_input_buffer()
-    ser.write(f'{text}\n'.encode())
-    ser.flush()
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        line = ser.readline().decode(errors='replace').strip()
-        if line.startswith(ok_prefix):
-            return line
-        if line.startswith(name):
-            raise RuntimeError(f"firmware: {line}")
-    raise RuntimeError(f"no reply to {name} - is the firmware current?")
-
-
 def set_frequency(ser, f_hz):
     """Send FREQ and return the firmware's actual frequency (Hz)."""
-    return float(_command(ser, f'FREQ {int(f_hz)}', 'FREQ set').rsplit('actual', 1)[1].split()[0])
+    return float(send_command(ser, f'FREQ {int(f_hz)}', 'FREQ set').rsplit('actual', 1)[1].split()[0])
 
 
 def set_cycles(ser, cycles):
     """Send CYCLES (burst length) and confirm it."""
-    _command(ser, f'CYCLES {int(cycles)}', 'CYCLES set')
+    send_command(ser, f'CYCLES {int(cycles)}', 'CYCLES set')
 
 
 def reset_drive(ser):
     """Send RESET (default frequency and burst length) and return the reply."""
-    return _command(ser, 'RESET', 'RESET done')
+    return send_command(ser, 'RESET', 'RESET done')
 
 
 def plot(path, points, summary):

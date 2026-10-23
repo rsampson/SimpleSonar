@@ -46,6 +46,7 @@ All plotting scripts read `sensor_stream.csv` from the current directory. The te
 ```bash
 python bench/run_test.py --profile NAME setup|noise|step|sine|linearity|crosstalk|reanalyze|report
 python bench/freq_sweep.py --profile NAME --target-m 2.0   # two-way response from a reflector's echo
+python bench/wifi_ab.py --profile NAME                     # does Wi-Fi add noise? (branch esp32-wifi-ap)
 pytest bench/
 ```
 
@@ -61,7 +62,9 @@ Packets, debug text, and START/STOP/TONE commands share **one** `Serial` port at
 
 `TONE` holds `PING_PIN` on as a continuous `PING_FREQUENCY` square wave (for scope debugging of the drive and receive chain) until STOP or START. Keep the port open while it runs. Opening the port doesn't reliably reboot the ESP32 on this adapter (`ping_id` continues across sessions), so don't count on a reopen to clear anything.
 
-`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them. `RESET` restores `PING_FREQUENCY` and `PING_CYCLES` (and stops `TONE`). `receive.py` sends it before START, so normal pinging always uses the defaults; `freq_sweep.py` sends it when it finishes.
+`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them. `WIFI ON|OFF|STATUS` (branch `esp32-wifi-ap`) starts or stops an open access point, SSID `SimpleSonar` (off at boot), with a TCP bridge on `192.168.4.1:3333`. A bridge client gets the same byte stream as the UART and can send the same commands, so `receive.py --port socket://192.168.4.1:3333` works over Wi-Fi. All firmware output goes through `out`, which writes to both. starfish's Wi-Fi is its only internet connection, so use the tablet as the Wi-Fi client, not starfish.
+
+`RESET` restores `PING_FREQUENCY` and `PING_CYCLES` (and stops `TONE`). `receive.py` sends it before START, so normal pinging always uses the defaults; `freq_sweep.py` sends it when it finishes.
 
 ### Ping packet format
 
@@ -92,7 +95,7 @@ The burst length, not transducer ringing, sets range resolution. Use an echo's *
 
 ### PC receive path (`pc/receive.py`)
 
-- `SERIAL_PORT = None` auto-detects the port by sending START to each of `SERIAL_PORT_CANDIDATES` (`/dev/ttyUSB0`, `/dev/ttyUSB1`); set it to a path to skip detection.
+- `SERIAL_PORT = None` auto-detects the port by sending START to each of `SERIAL_PORT_CANDIDATES` (`/dev/ttyUSB0`, `/dev/ttyUSB1`); set it (or `--port`) to a path or a `socket://` URL to skip detection. `open_port()` opens either; `SocketPort` fixes pyserial's socket backend, whose `in_waiting` only reports 0 or 1.
 - The START that begins the read loop is sent with `settle_s=0` (also in `bench/capture.py`). With 8 KB packets, any pause before reading lets more than ~4.7 KB (tty buffer + USB-serial FIFO) pile up. That drops one byte, which misaligns the first packet's samples and destroys the next packet's sync.
 - A `BufferedReader` wraps the port, because reading one byte per syscall can't keep up at 921600 baud.
 - Framing and resync live in `parse_next_event()`, which is separate from the serial/CSV I/O so it can be unit-tested (`pc/tests/test_receive_parse.py`). On desync (e.g. an in-flight ping after STOP), it resyncs on the next `0xAA 0xBB` and logs a `ping_id` gap instead of writing corrupt rows.

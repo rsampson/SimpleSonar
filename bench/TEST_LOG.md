@@ -9,6 +9,42 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
+## 2026-10-22 (starfish, host) — Wi-Fi interference A/B (branch `esp32-wifi-ap`)
+
+**Hardware:** as in the sweep entry below, but the target was removed and the
+user was near the sonar during the run. Sonar powered from starfish's USB.
+Firmware: `WIFI ON|OFF|STATUS`, which runs an open AP `SimpleSonar` with a TCP
+bridge on 192.168.4.1:3333.
+
+**Setup:** the Android tablet was the Wi-Fi client, reading the bridge in
+Termux (`while true; do nc 192.168.4.1 3333 > /dev/null; sleep 1; done`).
+starfish can't be the client: its Wi-Fi is its only internet connection.
+Android doesn't rejoin a network without internet by itself after the AP
+drops, so the tablet was rejoined by hand every round.
+
+**Captures** (`bench/profiles/wifi-2026-10-22/raw/`): `wifi_off_0`,
+`wifi_on_0`, `wifi_off_1`, `wifi_on_1`, 60 pings each. Analysis:
+`bench/wifi_ab.py`; plot `wifi_ab.png`.
+
+**Results: no measurable interference on USB power.**
+- **Out-of-band noise** (non-repeating residual, 0.5-30 and 50-99 kHz): 2.35
+  and 2.36 counts RMS off, 2.33 and 2.28 on (−0.19 dB). The noise spectrum
+  matches across 1-100 kHz.
+- **Spikes and spurs:** 0/120 pings with spikes in either state. Worst peak
+  37.1 counts off, 37.3 on. No new out-of-band spurs.
+- **Timing:** burst-to-sampling 1243-1244 µs in all states; echo phase jitter
+  26°/30° off, 35°/29° on (≈2 µs; one outlier ping in `wifi_on_0`).
+- **Echoes weaker during the "on" captures** (ping-locked 7.3/8.1 off vs
+  5.1/5.1 on; per-ping in-band 8.4/9.7 vs 6.6/6.1): the scene. The user was
+  next to the sonar handling the tablet, with the target gone.
+- **Every ping has a ~27-count out-of-band peak** that varies ping to ping.
+  It's the same with Wi-Fi off; not investigated.
+- **Tool fix:** the first analysis flagged spikes in every ping and an in-band
+  "spur" at 39.06 kHz, because varying echoes dominate the in-band residual.
+  The checks now use the out-of-band residual, and the profile was reanalyzed.
+
+**Decision (user):** proceed to stage 2 (the web server on the ESP32's AP).
+
 ## 2026-10-22 (starfish, host) — two-way frequency response sweeps
 
 **Hardware:** as in the conversion entry below. Transducers side by side, as for
@@ -165,3 +201,6 @@ reverberation pile up, hence the 300 ms interval.
 - Signal down from ±360 to ±70 counts late on 2026-10-22: check aim, preamp
   and wiring.
 - MOSFET-input buffer for the 40R-12 (2.2 kΩ load costs ~6-9 dB per the datasheet).
+- Wi-Fi on battery power (separate regulators for preamp and amp): repeat the
+  A/B with data over the bridge (branch `esp32-wifi-ap`).
+- The ~27-count non-repeating out-of-band peak in every ping (Wi-Fi off too).

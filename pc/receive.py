@@ -1,17 +1,22 @@
 
 import argparse
+import array
+import fcntl
 import serial
+import serial.urlhandler.protocol_socket
 import struct
 import csv
 import os
 import datetime
 import signal
+import termios
 import time
 from typing import NamedTuple, Optional
 
 # Configuration
-# SERIAL_PORT: set to a specific device path (e.g. '/dev/ttyUSB0') to force
-# that port; leave as None to auto-detect by probing SERIAL_PORT_CANDIDATES
+# SERIAL_PORT: set to a specific device path (e.g. '/dev/ttyUSB0') or the
+# firmware's Wi-Fi bridge (socket://192.168.4.1:3333, after WIFI ON) to force
+# that port (also --port); leave as None to auto-detect by probing SERIAL_PORT_CANDIDATES
 # (see find_sonar_port()) - the ESP32's USB-serial port has been observed to
 # enumerate as either ttyUSB0 or ttyUSB1 depending on what else is plugged in.
 SERIAL_PORT = None
@@ -36,6 +41,30 @@ PAYLOAD_BYTES = NUM_SAMPLES * 2  # int16_t per sample
 #   uint32_t sample_dt_us  - measured per-sample interval for this record
 HEADER_FORMAT = '<IqqHI'
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+
+
+class SocketPort(serial.urlhandler.protocol_socket.Serial):
+    """pyserial's socket:// port with a byte-accurate in_waiting.
+
+    The stock backend reports only 0 or 1 waiting bytes, so BufferedReader
+    would read an 8 KB packet one byte per call. FIONREAD gives the real
+    count (Linux, including Android/Termux).
+    """
+
+    @property
+    def in_waiting(self):
+        if not self.is_open:
+            raise serial.PortNotOpenError()
+        count = array.array('i', [0])
+        fcntl.ioctl(self._socket, termios.FIONREAD, count)
+        return count[0]
+
+
+def open_port(port, timeout=2):
+    """Open a serial device path or a socket:// URL (the firmware's Wi-Fi bridge)."""
+    if port.startswith('socket://'):
+        return SocketPort(port, timeout=timeout)
+    return serial.Serial(port, baudrate=BAUD_RATE, timeout=timeout)
 
 
 def send_control_command(ser, command, settle_s=0.1):
@@ -358,20 +387,22 @@ def needs_header(path, fresh):
     return False
 
 
-def continuous_serial_to_csv(fresh=False):
+def continuous_serial_to_csv(fresh=False, port=SERIAL_PORT):
     # Checked before the port is opened, which may reboot the ESP32.
     write_header = needs_header(OUTPUT_FILE, fresh)
     _install_interrupt_handler()
 
-    if SERIAL_PORT:
+    if port:
         # Explicit port: connect fresh, same as before auto-detect existed.
-        print(f"Connecting to {SERIAL_PORT} at {BAUD_RATE} baud...")
-        ser = serial.Serial(SERIAL_PORT, baudrate=BAUD_RATE, timeout=2) # 2s timeout gives leeway for 1s intervals
+        print(f"Connecting to {port}...")
+        ser = open_port(port)  # 2s timeout gives leeway for 1s intervals
 
-        # Opening the port toggles DTR/RTS, which can reset the ESP32 (not on
-        # every adapter). Give it time to reach loop() before we talk to it,
-        # otherwise the START command below is sent into the bootloader and lost.
-        time.sleep(2)
+        if not port.startswith('socket://'):
+            # Opening the port toggles DTR/RTS, which can reset the ESP32 (not
+            # on every adapter). Give it time to reach loop() before we talk to
+            # it, otherwise the START command below is sent into the bootloader
+            # and lost. A socket can't reset it.
+            time.sleep(2)
         ser.reset_input_buffer()
     else:
         # Auto-detect: find_sonar_port() already opened and verified
@@ -455,8 +486,12 @@ if __name__ == "__main__":
         '--fresh', action='store_true',
         help=f"Erase {OUTPUT_FILE} and start a new file instead of appending to the existing one."
     )
+    parser.add_argument(
+        '--port', default=SERIAL_PORT,
+        help="serial device, or socket://192.168.4.1:3333 for the Wi-Fi bridge (default: auto-detect USB)"
+    )
     args = parser.parse_args()
     try:
-        continuous_serial_to_csv(fresh=args.fresh)
+        continuous_serial_to_csv(fresh=args.fresh, port=args.port)
     except CsvLayoutError as e:
         raise SystemExit(f"Error: {e}")

@@ -116,6 +116,44 @@ interrupted, the script sends `RESET`, which returns the firmware to
 `PING_FREQUENCY` and `PING_CYCLES`. Reopening the port doesn't reliably reboot
 the ESP32, so without that the last step's settings would carry over.
 
+## Wi-Fi interference (branch `esp32-wifi-ap`)
+
+`wifi_ab.py` checks whether the ESP32's Wi-Fi adds noise. Over USB it
+alternates `WIFI OFF` and `WIFI ON` (`--rounds`, default 2) and captures
+`--pings` (60) in each state, with the transducers in their normal setup.
+
+While Wi-Fi is on, the radio has to carry real traffic. Join the tablet to the
+open `SimpleSonar` network and read the bridge, e.g. in Termux (`pkg install
+netcat-openbsd`):
+
+```bash
+nc 192.168.4.1 3333 > /dev/null
+```
+
+Keep it running for the whole test. Android often won't rejoin a network
+without internet by itself once it drops, so rejoin `SimpleSonar` by hand
+each time it reappears (once per round). The script waits up to 10 minutes
+(`--client-wait`) for the client before each "on" capture. Don't
+use starfish as the client: its Wi-Fi is its only internet connection.
+
+```bash
+python bench/wifi_ab.py --profile wifi-YYYY-MM-DD
+```
+
+It reports, Wi-Fi on against off, from the part of each capture that doesn't
+repeat ping to ping, outside the sonar band (500 Hz-30 kHz and 50 kHz up):
+the noise RMS, pings with spikes (an out-of-band peak over 1.5x the Wi-Fi-off
+median per-ping peak, where transmit bursts would show), and spurs that only
+appear with Wi-Fi on. Inside the band that residual is dominated by echoes
+varying with the room, so the in-band and ping-locked levels are printed as
+"scene" figures: someone standing near the sonar changes them. Results go to `profile.json` (`wifi_ab`), `response.npz` and
+`wifi_ab.png` (noise spectra). Wi-Fi is left off.
+
+This tests USB power. In the field the sonar runs on a battery, with separate
+regulators for the preamp and the output amp, and the data goes over Wi-Fi.
+To check that setup, capture over the bridge (`capture.open_sonar('socket://192.168.4.1:3333')`)
+and compare with the USB Wi-Fi-off baseline.
+
 ## Output
 
 `bench/profiles/NAME/`: `profile.json` (description, pad, test conditions and

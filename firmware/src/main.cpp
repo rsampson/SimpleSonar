@@ -4,6 +4,7 @@
 #include <esp_adc/adc_continuous.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <WiFi.h>
 
 #define BUFFER_SIZE 4096 // 4096 int16_t integers = 8192 bytes (8 KB), ~20 ms at 200 kHz
 int16_t data_buffer[BUFFER_SIZE];
@@ -37,7 +38,7 @@ int16_t data_buffer[BUFFER_SIZE];
 // one-shot analogRead() call costs several microseconds of driver overhead
 // on top of the actual conversion, which caps analogRead()-in-a-loop at
 // roughly 25-40 kHz and makes the per-sample spacing jittery (it's timed by
-// software, not hardware). The continuous driver clocks conversions from
+// software, not hardware).  The continuous driver clocks conversions from
 // the APB/ADC hardware timer instead, so ADC_SAMPLE_FREQ_HZ is the true,
 // uniform per-sample interval - which is what makes 200 kHz practical here.
 #define ADC_RESOLUTION_BITS 12
@@ -66,6 +67,13 @@ static_assert(1000000 % ADC_SAMPLE_FREQ_HZ == 0, "ADC_SAMPLE_FREQ_HZ must give a
 // 8KB payload would take ~700ms; at 921600 it takes ~90ms.
 #define SERIAL_BAUD 921600
 
+// WIFI ON starts an open access point and a TCP bridge: a client on
+// BRIDGE_PORT gets the same byte stream as the UART (packets and text) and
+// can send the same commands, so pyserial's socket://192.168.4.1:3333 URL
+// works wherever a serial port does. Off at boot.
+#define WIFI_AP_SSID "SimpleSonar"
+#define BRIDGE_PORT 3333
+
 // Packet header sent ahead of each data_buffer payload. Timestamps are
 // esp_timer_get_time() microseconds (monotonic since boot, not wall-clock),
 // so the PC must treat them as relative to the ESP32's own clock rather
@@ -89,6 +97,26 @@ uint32_t ping_frequency_hz = PING_FREQUENCY;
 // Burst length: PING_CYCLES at boot or after RESET, changed by CYCLES <n>.
 uint16_t ping_cycles = PING_CYCLES;
 String serial_command_buffer;
+String bridge_command_buffer;
+
+bool wifi_enabled = false;
+WiFiServer bridge_server(BRIDGE_PORT);
+WiFiClient bridge_client;
+
+// All output - packets and text - goes through `out`: to the UART, and to
+// the TCP bridge client while one is connected, as the same stream.
+class TeeOut : public Print {
+public:
+    size_t write(uint8_t b) override { return write(&b, 1); }
+    size_t write(const uint8_t *buf, size_t size) override {
+        size_t n = Serial.write(buf, size);
+        if (bridge_client && bridge_client.connected()) {
+            bridge_client.write(buf, size);
+        }
+        return n; // the UART's count: it's the link the short-write check guards
+    }
+};
+TeeOut out;
 
 adc_continuous_handle_t adc_handle = NULL;
 static SemaphoreHandle_t adc_frame_sem = NULL;
@@ -155,14 +183,14 @@ void capture_samples() {
     uint8_t frame[ADC_FRAME_SIZE_BYTES];
     while (adc_samples_collected < BUFFER_SIZE) {
         if (xSemaphoreTake(adc_frame_sem, pdMS_TO_TICKS(100)) != pdTRUE) {
-            Serial.println("WARNING: ADC frame wait timed out; padding remainder with zeros");
+            out.println("WARNING: ADC frame wait timed out; padding remainder with zeros");
             break; // timed out waiting on the ADC - avoid hanging loop() forever
         }
 
         uint32_t bytes_read = 0;
         esp_err_t err = adc_continuous_read(adc_handle, frame, sizeof(frame), &bytes_read, 0);
         if (err != ESP_OK) {
-            Serial.printf("WARNING: adc_continuous_read failed: %d\n", (int)err);
+            out.printf("WARNING: adc_continuous_read failed: %d\n", (int)err);
             continue;
         }
 
@@ -211,20 +239,21 @@ void capture_samples() {
 }
 
 void send_data(const PingHeader &header) {
-    // Data packets and debug text share one Serial port. receive.py tells
-    // them apart by peeking at the first byte: 0xAA (this header's sync
-    // byte) means a binary packet follows; anything else is a plain text
-    // debug line ending in '\n'. Never call Serial.print()/println() while
-    // a packet is being written, or its bytes could land mid-packet.
+    // Data packets and debug text share one stream (the UART, mirrored to
+    // the TCP bridge). receive.py tells them apart by peeking at the first
+    // byte: 0xAA (this header's sync byte) means a binary packet follows;
+    // anything else is a plain text debug line ending in '\n'. Never print
+    // to `out` while a packet is being written, or its bytes could land
+    // mid-packet.
 
     // 1. Send Header (includes its own sync bytes)
-    size_t hdr_written = Serial.write((const uint8_t*)&header, sizeof(header));
+    size_t hdr_written = out.write((const uint8_t*)&header, sizeof(header));
 
     // 2. Send Payload (Cast the integer array to a byte pointer)
-    size_t payload_written = Serial.write((uint8_t*)data_buffer, sizeof(data_buffer));
+    size_t payload_written = out.write((uint8_t*)data_buffer, sizeof(data_buffer));
 
     if (hdr_written != sizeof(header) || payload_written != sizeof(data_buffer)) {
-        Serial.printf("WARNING: short write ping_id=%lu hdr=%u/%u payload=%u/%u\n",
+        out.printf("WARNING: short write ping_id=%lu hdr=%u/%u payload=%u/%u\n",
                        (unsigned long)header.ping_id, (unsigned)hdr_written, (unsigned)sizeof(header),
                        (unsigned)payload_written, (unsigned)sizeof(data_buffer));
     }
@@ -240,44 +269,44 @@ void handle_serial_command(const String &command) {
             ledcWrite(PING_PIN, 0);
         }
         ping_enabled = true;
-        Serial.println("START command received: pinging enabled");
+        out.println("START command received: pinging enabled");
     } else if (normalized.equalsIgnoreCase("STOP")) {
         ping_enabled = false;
         if (tone_enabled) {
             tone_enabled = false;
             ledcWrite(PING_PIN, 0);
         }
-        Serial.println("STOP command received: pinging disabled");
+        out.println("STOP command received: pinging disabled");
     } else if (normalized.equalsIgnoreCase("TONE")) {
         // Leave the LEDC output running: a steady PING_FREQUENCY square wave
         // on PING_PIN until STOP or START.
         ping_enabled = false;
         tone_enabled = true;
         ledcWrite(PING_PIN, PING_DUTY);
-        Serial.println("TONE command received: continuous tone on PING_PIN");
+        out.println("TONE command received: continuous tone on PING_PIN");
     } else if (normalized.length() > 5 && normalized.substring(0, 5).equalsIgnoreCase("FREQ ")) {
         long requested = normalized.substring(5).toInt();
         if (requested < PING_FREQ_MIN_HZ || requested > PING_FREQ_MAX_HZ) {
-            Serial.printf("FREQ rejected: %ld Hz outside %d-%d Hz\n", requested, PING_FREQ_MIN_HZ, PING_FREQ_MAX_HZ);
+            out.printf("FREQ rejected: %ld Hz outside %d-%d Hz\n", requested, PING_FREQ_MIN_HZ, PING_FREQ_MAX_HZ);
             return;
         }
         uint32_t actual = ledcChangeFrequency(PING_PIN, (uint32_t)requested, PING_RESOLUTION);
         if (actual == 0) {
-            Serial.printf("FREQ failed: LEDC could not set %ld Hz\n", requested);
+            out.printf("FREQ failed: LEDC could not set %ld Hz\n", requested);
             return;
         }
         ping_frequency_hz = actual;
         // A running TONE picks up the new frequency; keep its duty set.
         ledcWrite(PING_PIN, tone_enabled ? PING_DUTY : 0);
-        Serial.printf("FREQ set: requested %ld Hz, actual %lu Hz\n", requested, (unsigned long)actual);
+        out.printf("FREQ set: requested %ld Hz, actual %lu Hz\n", requested, (unsigned long)actual);
     } else if (normalized.length() > 7 && normalized.substring(0, 7).equalsIgnoreCase("CYCLES ")) {
         long requested = normalized.substring(7).toInt();
         if (requested < PING_CYCLES_MIN || requested > PING_CYCLES_MAX) {
-            Serial.printf("CYCLES rejected: %ld outside %d-%d\n", requested, PING_CYCLES_MIN, PING_CYCLES_MAX);
+            out.printf("CYCLES rejected: %ld outside %d-%d\n", requested, PING_CYCLES_MIN, PING_CYCLES_MAX);
             return;
         }
         ping_cycles = (uint16_t)requested;
-        Serial.printf("CYCLES set: %u\n", (unsigned)ping_cycles);
+        out.printf("CYCLES set: %u\n", (unsigned)ping_cycles);
     } else if (normalized.equalsIgnoreCase("RESET")) {
         // Back to the compiled-in drive settings. Opening the serial port
         // doesn't reliably reboot the ESP32, so FREQ/CYCLES from an earlier
@@ -290,24 +319,69 @@ void handle_serial_command(const String &command) {
             ping_frequency_hz = actual;
         }
         ping_cycles = PING_CYCLES;
-        Serial.printf("RESET done: %lu Hz, %u cycles\n", (unsigned long)ping_frequency_hz, (unsigned)ping_cycles);
+        out.printf("RESET done: %lu Hz, %u cycles\n", (unsigned long)ping_frequency_hz, (unsigned)ping_cycles);
+    } else if (normalized.equalsIgnoreCase("WIFI ON")) {
+        if (!wifi_enabled) {
+            WiFi.mode(WIFI_AP);
+            if (!WiFi.softAP(WIFI_AP_SSID)) { // no password: open network
+                WiFi.mode(WIFI_OFF);
+                out.println("WIFI failed: access point did not start");
+                return;
+            }
+            bridge_server.begin();
+            bridge_server.setNoDelay(true);
+            wifi_enabled = true;
+        }
+        out.printf("WIFI on: SSID %s (open), bridge %s:%d\n", WIFI_AP_SSID,
+                   WiFi.softAPIP().toString().c_str(), BRIDGE_PORT);
+    } else if (normalized.equalsIgnoreCase("WIFI OFF")) {
+        // Sent over the bridge, this ends its own connection.
+        if (wifi_enabled) {
+            bridge_client.stop();
+            bridge_server.end();
+            WiFi.softAPdisconnect(true);
+            WiFi.mode(WIFI_OFF);
+            wifi_enabled = false;
+        }
+        out.println("WIFI off");
+    } else if (normalized.equalsIgnoreCase("WIFI STATUS")) {
+        out.printf("WIFI status: %s, %d station(s), bridge client %s\n", wifi_enabled ? "on" : "off",
+                   wifi_enabled ? WiFi.softAPgetStationNum() : 0,
+                   (bridge_client && bridge_client.connected()) ? "connected" : "none");
+    }
+}
+
+static void read_commands(Stream &in, String &buffer) {
+    while (in.available() > 0) {
+        char c = in.read();
+        if (c == '\n' || c == '\r') {
+            if (buffer.length() > 0) {
+                handle_serial_command(buffer);
+                buffer = "";
+            }
+        } else {
+            buffer += c;
+            if (buffer.length() > 32) {
+                buffer = "";
+            }
+        }
     }
 }
 
 void process_commands() {
-    while (Serial.available() > 0) {
-        char c = Serial.read();
-        if (c == '\n' || c == '\r') {
-            if (serial_command_buffer.length() > 0) {
-                handle_serial_command(serial_command_buffer);
-                serial_command_buffer = "";
-            }
-        } else {
-            serial_command_buffer += c;
-            if (serial_command_buffer.length() > 32) {
-                serial_command_buffer = "";
-            }
-        }
+    read_commands(Serial, serial_command_buffer);
+    if (!wifi_enabled) {
+        return;
+    }
+    if (bridge_server.hasClient()) {
+        // One bridge client at a time; a new connection replaces the old.
+        bridge_client.stop();
+        bridge_client = bridge_server.accept();
+        bridge_client.setNoDelay(true);
+        bridge_command_buffer = "";
+    }
+    if (bridge_client && bridge_client.connected()) {
+        read_commands(bridge_client, bridge_command_buffer);
     }
 }
 

@@ -21,10 +21,43 @@ HEADER = ['Timestamp', 'PingID', 'T_ping_us', 'T_sample_us', 'NumSamples', 'Samp
          [f"Int_{i}" for i in range(receive.NUM_SAMPLES)]
 
 
-def open_sonar():
-    """Find the sonar and return its open, idle serial port."""
-    _, ser = find_sonar_port()
+def open_sonar(port=None):
+    """Open the sonar's port (auto-detected USB if None, or a device path or
+    socket:// URL) and return it idle."""
+    if port is None:
+        _, ser = find_sonar_port()
+        return ser
+    ser = receive.open_port(port)
+    send_control_command(ser, receive.STOP_COMMAND)
+    ser.reset_input_buffer()
     return ser
+
+
+def send_command(ser, text, ok_prefix, timeout_s=2.0):
+    """Send a command line and return the firmware's reply containing ok_prefix.
+
+    The reply is matched anywhere in a line, since leftover bytes from an
+    in-flight packet can precede it. Raises RuntimeError on a '<NAME>
+    rejected/failed' reply, or on no reply (listing the last lines seen).
+    """
+    name = text.split()[0]
+    ser.reset_input_buffer()
+    ser.write(f'{text}\n'.encode())
+    ser.flush()
+    deadline = time.monotonic() + timeout_s
+    seen = []
+    while time.monotonic() < deadline:
+        line = ser.readline().decode(errors='replace').strip()
+        if not line:
+            continue
+        k = line.find(ok_prefix)
+        if k >= 0:
+            return line[k:]
+        if f'{name} rejected' in line or f'{name} failed' in line:
+            raise RuntimeError(f"firmware: {line}")
+        seen = (seen + [line[-80:]])[-3:]
+    raise RuntimeError(f"no reply to {text!r} in {timeout_s} s - is the firmware current? "
+                       f"Last lines: {seen}")
 
 
 def capture(ser, n_pings, out_path, skip=2, timeout_s=None, log=print):
