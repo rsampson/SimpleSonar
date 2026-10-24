@@ -226,6 +226,6 @@ reverberation pile up, hence the 300 ms interval.
   and wiring.
 - MOSFET-input buffer for the 40R-12 (2.2 kΩ load costs ~6-9 dB per the datasheet).
 - Wi-Fi on battery power (separate regulators for preamp and amp): repeat the
-  A/B with data over the bridge (branch `esp32-wifi-ap`).
+  A/B with data over the bridge.
 - Long unattended tablet run of the web echogram since the bridge-write fix.
 - The ~27-count non-repeating out-of-band peak in every ping (Wi-Fi off too).

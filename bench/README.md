@@ -116,7 +116,7 @@ interrupted, the script sends `RESET`, which returns the firmware to
 `PING_FREQUENCY` and `PING_CYCLES`. Reopening the port doesn't reliably reboot
 the ESP32, so without that the last step's settings would carry over.
 
-## Wi-Fi interference (branch `esp32-wifi-ap`)
+## Wi-Fi interference
 
 `wifi_ab.py` checks whether the ESP32's Wi-Fi adds noise. The AP is on at
 boot, so the script starts with `WIFI OFF`. Over USB it alternates `WIFI OFF`

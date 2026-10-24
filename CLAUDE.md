@@ -47,7 +47,7 @@ All plotting scripts read `sensor_stream.csv` from the current directory. The te
 ```bash
 python bench/run_test.py --profile NAME setup|noise|step|sine|linearity|crosstalk|reanalyze|report
 python bench/freq_sweep.py --profile NAME --target-m 2.0   # two-way response from a reflector's echo
-python bench/wifi_ab.py --profile NAME                     # does Wi-Fi add noise? (branch esp32-wifi-ap)
+python bench/wifi_ab.py --profile NAME                     # does Wi-Fi add noise?
 pytest bench/
 ```
 
@@ -63,7 +63,9 @@ Packets, debug text, and START/STOP/TONE commands share **one** `Serial` port at
 
 `TONE` holds `PING_PIN` on as a continuous `PING_FREQUENCY` square wave (for scope debugging of the drive and receive chain) until STOP or START. Keep the port open while it runs. Opening the port doesn't reliably reboot the ESP32 on this adapter (`ping_id` continues across sessions), so don't count on a reopen to clear anything.
 
-`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them. ### Wi-Fi and the web echogram (branch `esp32-wifi-ap`)
+`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them.
+
+### Wi-Fi and the web echogram
 
 At boot the ESP32 starts an open access point, SSID `SimpleSonar`, and starts pinging (`PING_AUTOSTART`), so on a battery it runs with no PC. Join the network and open `http://192.168.4.1` for the live echogram. `WIFI ON|OFF|STATUS` switches the AP at run time (`wifi_start()`/`wifi_stop()`).
 
