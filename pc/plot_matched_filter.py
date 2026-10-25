@@ -7,7 +7,7 @@ from plot_sensor_stream import load_packets, META_COLUMNS, range_axis_cm
 
 INPUT_FILE = 'sensor_stream.csv'
 
-# Must match the LEDC drive configuration in firmware/src/main.cpp.
+# Must match the burst drive configuration in firmware/src/main.cpp.
 PING_FREQUENCY_HZ = 40000
 PING_CYCLES = 10
 
@@ -19,9 +19,9 @@ US_TO_CM = (SPEED_OF_SOUND_M_S * 100 / 1e6) / 2  # one-way range per microsecond
 def make_ping_template(sample_dt_us, freq_hz=PING_FREQUENCY_HZ, cycles=PING_CYCLES):
     """Reconstruct the transmitted burst as sampled at the receiver's rate.
 
-    The firmware drives PING_PIN as a free-running LEDC square wave (~50%
-    duty) for PING_CYCLES at PING_FREQUENCY_HZ, gated on for exactly that
-    many cycles and off otherwise. freq_hz/cycles override those for
+    The firmware drives the array from an H-bridge as a +/- square wave
+    (forward half first) for exactly PING_CYCLES at PING_FREQUENCY_HZ, and
+    holds it at 0 V (brake) otherwise. freq_hz/cycles override those for
     captures made with an older burst. That gated square wave, not an
     idealized sinusoid, is the actual matched-filter reference: it is what
     left the transducer electrically before the channel and transducer
@@ -34,7 +34,7 @@ def make_ping_template(sample_dt_us, freq_hz=PING_FREQUENCY_HZ, cycles=PING_CYCL
     # sample rate is a multiple of the tone (5 samples/cycle at 40 kHz /
     # 200 kHz) samples land exactly on edges, where sign(sin()) flips at
     # random on floating-point rounding; this puts each edge sample in the
-    # half-cycle it starts, as the LEDC output does.
+    # half-cycle it starts, as the firmware's edges do.
     half_cycle = (np.arange(n) * round(sample_dt_us) * 2 * round(freq_hz)) // 1_000_000
     template = np.where(half_cycle % 2 == 0, 1.0, -1.0)
     # Zero-mean so correlation isn't biased by the reference's DC content.

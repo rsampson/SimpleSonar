@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <esp_timer.h>
-#include <driver/ledc.h>
+#include <esp_cpu.h>
+#include <soc/gpio_reg.h>
 #include <esp_adc/adc_continuous.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -19,10 +20,15 @@ int16_t data_buffer[BUFFER_SIZE];
 // from earlier pings pile up under the next one's echoes; a longer interval
 // lets it decay first.
 #define PING_INTERVAL_MS 300
-#define PING_PIN 25             // single-ended drive into the audio amplifier (11-element 40T-12 array)
-#define UNUSED_PIN 26           // former inverted half of the differential drive
+// The transmit array (10 x 40T-12 in parallel, 12.5 nF) sits across the
+// outputs of a DRV8871 H-bridge on 12 V, driven complementary for a 24 V
+// peak-to-peak swing. IN1/IN2 = 1/0 drives forward, 0/1 reverse, and 1/1
+// brakes (both low sides on, array shorted). Between bursts the pins hold
+// brake: 0/0 would put the DRV8871 to sleep after 1 ms, and waking it costs
+// ~55 us, the first two cycles of the next burst.
+#define PING_PIN_A 25           // DRV8871 IN1
+#define PING_PIN_B 26           // DRV8871 IN2
 #define ANALOG_PIN 34           // single 40R-12 receive element via the preamp
-// PWM (LEDC) configuration for ESP32
 #define PING_FREQUENCY 40000     // Hz, the 40T/40R-12 resonance (40.0 +/- 1.0 kHz)
 // The 40T-12 is narrowband (~4 kHz bandwidth, Q~10), so it needs only
 // ~Q/pi =~ 3-4 cycles to reach steady amplitude, and a matched filter can't
@@ -31,10 +37,12 @@ int16_t data_buffer[BUFFER_SIZE];
 // zone, but add energy per ping. 10 cycles (250 us, ~4 cm) keeps margin
 // above the ramp-up while staying short.
 #define PING_CYCLES 10          // number of cycles to emit
+// TONE runs on the LEDC (bursts are timed in software, see emit_burst()).
+// Channels 0 and 1 share LEDC timer 0, so with B inverted the pair stays
+// complementary.
 #define PING_RESOLUTION 8       // bits (0-255)
-// LEDC channel pinned explicitly so it lands on timer 0, which
-// emit_burst() resets to phase-lock each burst.
-#define PING_CHANNEL 0
+#define PING_CHANNEL_A 0
+#define PING_CHANNEL_B 1
 #define PING_DUTY 128           // duty (0 - 2^PING_RESOLUTION-1)
 // ADC configuration - set explicitly so sample rate/dynamic range are
 // deterministic rather than relying on core defaults. Sampling uses the
@@ -117,13 +125,43 @@ static int ws_client_count();
 
 uint32_t ping_id = 0;
 bool ping_enabled = false;
-bool tone_enabled = false; // continuous ping_frequency_hz on PING_PIN, for scope debugging
+bool tone_enabled = false; // continuous ping_frequency_hz on IN1/IN2, for scope debugging
 // Drive frequency: PING_FREQUENCY at boot or after RESET, changed by FREQ <hz>.
-// Holds the LEDC's actual frequency, which can differ from the request by a
-// few Hz (its clock divider is quantized).
+// Bursts hit it exactly (emit_burst() times edges off the CPU clock); TONE's
+// LEDC can be a few Hz off (its clock divider is quantized).
 uint32_t ping_frequency_hz = PING_FREQUENCY;
 // Burst length: PING_CYCLES at boot or after RESET, changed by CYCLES <n>.
 uint16_t ping_cycles = PING_CYCLES;
+
+// Both bridge inputs high: brake, the idle state between bursts.
+static void bridge_brake() {
+    pinMode(PING_PIN_A, OUTPUT);
+    pinMode(PING_PIN_B, OUTPUT);
+    digitalWrite(PING_PIN_A, HIGH);
+    digitalWrite(PING_PIN_B, HIGH);
+}
+
+// Hands the pins to the LEDC for a continuous complementary square wave.
+// Returns the LEDC's actual frequency (0 if it couldn't set it).
+static uint32_t start_tone() {
+    if (!ledcAttachChannel(PING_PIN_A, ping_frequency_hz, PING_RESOLUTION, PING_CHANNEL_A) ||
+        !ledcAttachChannel(PING_PIN_B, ping_frequency_hz, PING_RESOLUTION, PING_CHANNEL_B)) {
+        bridge_brake();
+        return 0;
+    }
+    ledcOutputInvert(PING_PIN_B, true);
+    ledcWrite(PING_PIN_A, PING_DUTY);
+    ledcWrite(PING_PIN_B, PING_DUTY);
+    return ledcReadFreq(PING_PIN_A);
+}
+
+// Takes the pins back from the LEDC and returns the bridge to brake.
+static void stop_tone() {
+    ledcOutputInvert(PING_PIN_B, false);
+    ledcDetach(PING_PIN_A);
+    ledcDetach(PING_PIN_B);
+    bridge_brake();
+}
 String serial_command_buffer;
 String bridge_command_buffer;
 
@@ -317,7 +355,7 @@ void handle_serial_command(const String &command) {
     if (normalized.equalsIgnoreCase("START")) {
         if (tone_enabled) {
             tone_enabled = false;
-            ledcWrite(PING_PIN, 0);
+            stop_tone();
         }
         ping_enabled = true;
         out.println("START command received: pinging enabled");
@@ -325,31 +363,43 @@ void handle_serial_command(const String &command) {
         ping_enabled = false;
         if (tone_enabled) {
             tone_enabled = false;
-            ledcWrite(PING_PIN, 0);
+            stop_tone();
         }
         out.println("STOP command received: pinging disabled");
     } else if (normalized.equalsIgnoreCase("TONE")) {
-        // Leave the LEDC output running: a steady PING_FREQUENCY square wave
-        // on PING_PIN until STOP or START.
+        // Leave the LEDC output running: a steady complementary square wave
+        // on IN1/IN2 until STOP or START.
         ping_enabled = false;
+        if (tone_enabled) {
+            stop_tone();
+        }
+        uint32_t actual = start_tone();
+        if (actual == 0) {
+            tone_enabled = false;
+            out.println("TONE failed: LEDC could not start");
+            return;
+        }
         tone_enabled = true;
-        ledcWrite(PING_PIN, PING_DUTY);
-        out.println("TONE command received: continuous tone on PING_PIN");
+        out.printf("TONE command received: continuous %lu Hz tone on IN1/IN2\n", (unsigned long)actual);
     } else if (normalized.length() > 5 && normalized.substring(0, 5).equalsIgnoreCase("FREQ ")) {
         long requested = normalized.substring(5).toInt();
         if (requested < PING_FREQ_MIN_HZ || requested > PING_FREQ_MAX_HZ) {
             out.printf("FREQ rejected: %ld Hz outside %d-%d Hz\n", requested, PING_FREQ_MIN_HZ, PING_FREQ_MAX_HZ);
             return;
         }
-        uint32_t actual = ledcChangeFrequency(PING_PIN, (uint32_t)requested, PING_RESOLUTION);
-        if (actual == 0) {
-            out.printf("FREQ failed: LEDC could not set %ld Hz\n", requested);
-            return;
+        // Bursts are timed off the CPU clock, so they get the requested
+        // frequency exactly.
+        ping_frequency_hz = (uint32_t)requested;
+        if (tone_enabled) {
+            // A running TONE picks up the new frequency.
+            stop_tone();
+            uint32_t tone_hz = start_tone();
+            tone_enabled = tone_hz != 0;
+            out.printf("FREQ set: requested %ld Hz, actual %lu Hz (TONE %lu Hz)\n", requested,
+                       (unsigned long)ping_frequency_hz, (unsigned long)tone_hz);
+        } else {
+            out.printf("FREQ set: requested %ld Hz, actual %lu Hz\n", requested, (unsigned long)ping_frequency_hz);
         }
-        ping_frequency_hz = actual;
-        // A running TONE picks up the new frequency; keep its duty set.
-        ledcWrite(PING_PIN, tone_enabled ? PING_DUTY : 0);
-        out.printf("FREQ set: requested %ld Hz, actual %lu Hz\n", requested, (unsigned long)actual);
     } else if (normalized.length() > 7 && normalized.substring(0, 7).equalsIgnoreCase("CYCLES ")) {
         long requested = normalized.substring(7).toInt();
         if (requested < PING_CYCLES_MIN || requested > PING_CYCLES_MAX) {
@@ -363,12 +413,11 @@ void handle_serial_command(const String &command) {
         // doesn't reliably reboot the ESP32, so FREQ/CYCLES from an earlier
         // session would otherwise carry into normal pinging. Pinging itself
         // is left as it was; a running TONE stops.
-        tone_enabled = false;
-        uint32_t actual = ledcChangeFrequency(PING_PIN, PING_FREQUENCY, PING_RESOLUTION);
-        ledcWrite(PING_PIN, 0);
-        if (actual != 0) {
-            ping_frequency_hz = actual;
+        if (tone_enabled) {
+            tone_enabled = false;
+            stop_tone();
         }
+        ping_frequency_hz = PING_FREQUENCY;
         ping_cycles = PING_CYCLES;
         out.printf("RESET done: %lu Hz, %u cycles\n", (unsigned long)ping_frequency_hz, (unsigned)ping_cycles);
     } else if (normalized.equalsIgnoreCase("WIFI ON")) {
@@ -580,48 +629,66 @@ void process_commands() {
 
 // Emits the burst and returns esp_timer_get_time() at its true start.
 //
-// PING_PIN free-runs as a hardware square wave at ping_frequency_hz (set in
-// setup() or by FREQ), so the tone is generated entirely by the LEDC peripheral - no
-// per-half-cycle software toggling needed.
+// The bridge is driven from brake through ping_cycles x (forward, reverse)
+// and back to brake, with each pin edge timed off the CPU cycle counter
+// inside a critical section, from IRAM. That gives the exact cycle count
+// at any FREQ, a burst start that is a fixed number of CPU cycles after the
+// returned timestamp (so each echo's phase against the ADC window repeats
+// from ping to ping, for coherent averaging), and a waveform that can later
+// be extended, e.g. with anti-phase damping cycles. Interrupts on this core
+// are off for the burst: 250 us at the default 10 cycles, 5 ms at 200.
 //
-// A duty change only takes effect at the next PWM period boundary, so on the
-// free-running timer the burst would start anywhere from 0 to 1 period
-// (25 us at 40 kHz) after the ledcWrite() call, at a different point every ping.
-// That random start scrambles the echo's phase against the ADC window and
-// defeats coherent (waveform) averaging across pings. Resetting the timer
-// first puts the counter at 0, so the first boundary is exactly one period
-// later every time: burst start = reset + 1 period, deterministically. The
-// off write is timed to latch half a period past the ping_cycles-th
-// boundary, giving exactly ping_cycles whole cycles. Timing is in ns: at a
-// swept frequency such as 40250 Hz the period (24.84 us) isn't whole us, and
-// truncating it would land the off write past the next boundary (11 cycles).
-int64_t emit_burst() {
-    const uint32_t periodNs = 1000000000UL / ping_frequency_hz;
-    const int64_t offDelayNs = (int64_t)periodNs * ping_cycles + periodNs / 2;
+// Half-period edges are spaced cpu_hz / (2 f) ticks apart, carrying the
+// remainder Bresenham-style so the average frequency is exact (each edge is
+// within one tick, ~4 ns). Each transition sets the rising pin before
+// clearing the falling one, so the two writes' ~25 ns skew is a brief brake,
+// far shorter than the DRV8871 can see (it needs 400-800 ns).
+static portMUX_TYPE burst_mux = portMUX_INITIALIZER_UNLOCKED;
 
-    int64_t t_reset = esp_timer_get_time();
-    ledc_timer_rst(LEDC_HIGH_SPEED_MODE, LEDC_TIMER_0);
-    ledcWrite(PING_PIN, PING_DUTY);
+int64_t IRAM_ATTR emit_burst() {
+    const uint32_t mask_a = 1UL << PING_PIN_A;
+    const uint32_t mask_b = 1UL << PING_PIN_B;
+    const uint32_t cpu_hz = getCpuFrequencyMhz() * 1000000UL;
+    const uint32_t half_den = 2 * ping_frequency_hz;
+    const uint32_t half_q = cpu_hz / half_den;
+    const uint32_t half_r = cpu_hz % half_den;
+    const uint32_t half_cycles = 2 * (uint32_t)ping_cycles;
 
-    // Busy-wait to the off point, measured from the reset.
-    while ((esp_timer_get_time() - t_reset) * 1000 < offDelayNs) {
+    portENTER_CRITICAL(&burst_mux);
+    const int64_t t_start = esp_timer_get_time();
+    const uint32_t c_start = esp_cpu_get_cycle_count();
+    uint32_t edge = 0; // ticks from c_start to the next edge
+    uint32_t rem = 0;
+    for (uint32_t h = 0; h <= half_cycles; h++) {
+        while (esp_cpu_get_cycle_count() - c_start < edge) {
+        }
+        if (h == half_cycles) {
+            REG_WRITE(GPIO_OUT_W1TS_REG, mask_a | mask_b); // brake
+        } else if (h & 1) {
+            REG_WRITE(GPIO_OUT_W1TS_REG, mask_b); // reverse: IN1=0, IN2=1
+            REG_WRITE(GPIO_OUT_W1TC_REG, mask_a);
+        } else {
+            REG_WRITE(GPIO_OUT_W1TS_REG, mask_a); // forward: IN1=1, IN2=0
+            REG_WRITE(GPIO_OUT_W1TC_REG, mask_b);
+        }
+        edge += half_q;
+        rem += half_r;
+        if (rem >= half_den) {
+            rem -= half_den;
+            edge++;
+        }
     }
+    portEXIT_CRITICAL(&burst_mux);
 
-    // End with the output quiet (latches at the next boundary).
-    ledcWrite(PING_PIN, 0);
-
-    return t_reset + (periodNs + 500) / 1000;
+    return t_start;
 }
 
 void setup() {
+    // Brake first: until these are outputs the DRV8871's pulldowns hold it
+    // asleep with the array floating.
+    bridge_brake();
+
     Serial.begin(SERIAL_BAUD);
-
-    // Single-ended drive: the audio amplifier takes one 0-3.3 V square wave.
-    ledcAttachChannel(PING_PIN, PING_FREQUENCY, PING_RESOLUTION, PING_CHANNEL);
-    ledcWrite(PING_PIN, 0);
-
-    // Leave the old differential pin high-impedance in case it's still wired.
-    pinMode(UNUSED_PIN, INPUT);
 
     init_adc_continuous();
 

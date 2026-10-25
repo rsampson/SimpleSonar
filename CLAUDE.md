@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An ESP32-based sonar front end and PC-side tooling for capturing and visualizing ping data over air:
 
-- **firmware/** — PlatformIO/Arduino project for the ESP32. Drives an 11-element 40 kHz piezo transmit array (40T-12, staggered ~25 mm spacing, through an audio amplifier) with a short tone burst, samples a single 40R-12 receive element via the ESP-IDF ADC continuous/DMA driver, and streams framed ping packets over the flashing/debug UART.
+- **firmware/** — PlatformIO/Arduino project for the ESP32. Drives a 10-element 40 kHz piezo transmit array (40T-12 in parallel, staggered ~25 mm spacing, through a DRV8871 H-bridge on 12 V) with a short tone burst, samples a single 40R-12 receive element via the ESP-IDF ADC continuous/DMA driver, and streams framed ping packets over the flashing/debug UART.
 - **pc/** — Python tools that receive, log, and visualize ping data.
 - **bench/** — characterization of the electronics alone (see below).
 - **hardware/** — KiCad designs: `sonar_preamp/` (older TL081 preamp, kept deliberately) and `sonar_amp.*` (separate board, untracked). Edit KiCad files only through the Konnect MCP tools.
@@ -61,9 +61,9 @@ With the mic removed, a bench generator drives the mic node through a ÷1000 (or
 
 Packets, debug text, and START/STOP/TONE commands share **one** `Serial` port at 921600 baud (`SERIAL_BAUD` in `firmware/src/main.cpp` must match `BAUD_RATE` in `pc/receive.py`). `receive.py` treats a leading `0xAA` byte as the start of a packet and anything else as a text line up to `\n`. **Firmware must never print text while a packet is being written** (see `send_data()`), or framing breaks.
 
-`TONE` holds `PING_PIN` on as a continuous `PING_FREQUENCY` square wave (for scope debugging of the drive and receive chain) until STOP or START. Keep the port open while it runs. Opening the port doesn't reliably reboot the ESP32 on this adapter (`ping_id` continues across sessions), so don't count on a reopen to clear anything.
+`TONE` hands IN1/IN2 to the LEDC for a continuous complementary square wave at the drive frequency (for scope debugging of the drive and receive chain) until STOP or START, which return them to brake. Keep the port open while it runs. Opening the port doesn't reliably reboot the ESP32 on this adapter (`ping_id` continues across sessions), so don't count on a reopen to clear anything.
 
-`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot, and replies with the LEDC's actual frequency, which can differ by a few Hz. `emit_burst()` times the burst in ns, so frequencies whose period isn't a whole µs still give exactly `PING_CYCLES` cycles. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them.
+`FREQ <hz>` (30–50 kHz) changes the drive frequency for pings and `TONE` until `RESET` or a reboot. Bursts get the requested frequency exactly, and the reply's `actual` is that; a running `TONE` is restarted on the LEDC, which can be a few Hz off and is reported separately. `CYCLES <n>` (1–200) likewise sets the burst length. The packet header carries neither, so whoever sends them must record them.
 
 ### Wi-Fi and the web echogram
 
@@ -96,12 +96,13 @@ The packed `PingHeader` struct in `main.cpp` is mirrored by `HEADER_FORMAT`/`HEA
 
 Key tunables are at the top of the file: `PING_FREQUENCY` (40000 Hz), `PING_CYCLES` (10), `PING_INTERVAL_MS` (300), ADC settings, `SERIAL_BAUD`.
 
-1. `emit_burst()` drives a single-ended square wave on `PING_PIN` (GPIO25) via one LEDC PWM channel, gated on for `PING_CYCLES` cycles. GPIO26 (`UNUSED_PIN`) is left as a high-impedance input. The LEDC timer is reset before each burst so every ping is phase-locked to the ADC window, which allows coherent averaging and background subtraction. The function returns the true burst-start time (`t_ping_us`). The receive element is on `ANALOG_PIN` (GPIO34).
+1. `emit_burst()` drives the DRV8871's IN1/IN2 (`PING_PIN_A` GPIO25, `PING_PIN_B` GPIO26) complementary: `PING_CYCLES` × (forward, reverse), then back to brake. The edges are timed off the CPU cycle counter, from IRAM with interrupts off, so the cycle count is exact at any frequency and every ping is phase-locked to the ADC window, which allows coherent averaging and background subtraction. The function returns the burst-start time (`t_ping_us`); the DRV8871 adds a fixed ~1 µs (0.17 mm). The receive element is on `ANALOG_PIN` (GPIO34).
+   - **Idle is brake (IN1 = IN2 = 1), never 0/0.** With both inputs low for 1 ms the DRV8871 sleeps, and waking it takes ~55 µs, the first two cycles of the next burst. Brake shorts the array but adds little damping (that would need ~1/(ωC₀) ≈ 320 Ω).
 2. After `AFTER_DELAY_US`, `capture_samples()` reads `BUFFER_SIZE` (4096) samples at a hardware-clocked `ADC_SAMPLE_FREQ_HZ` (200 kHz; `BUFFER_SIZE` must match `NUM_SAMPLES` in `receive.py`). Don't use `analogRead()`: it is software-timed and jittery.
 3. `capture_samples()` un-swaps each adjacent sample pair (the original ESP32's ADC DMA delivers them swapped; captures from before 2026-10-14 still have the swap). The exact-zero glitch runs the ADC emitted at 100 kHz don't occur at 200 kHz, so their repair was removed; a 0 in the data is a real reading (clipping).
 4. `send_data()` writes the header and raw `int16_t` payload to `Serial`.
 
-The burst length, not transducer ringing, sets range resolution. Use an echo's **leading edge**, not its envelope peak, as the range marker (`bench/direct_path.py`, `bench/echo_onset.py`).
+The burst length, not transducer ringing, sets range resolution. (Measured on the 3.3 kHz speaker and microphone. At 40 kHz one element's ringing time constant is ~130 µs, comparable to the 250 µs burst, so this may no longer hold.) Use an echo's **leading edge**, not its envelope peak, as the range marker (`bench/direct_path.py`, `bench/echo_onset.py`).
 
 ### PC receive path (`pc/receive.py`)
 
@@ -125,7 +126,8 @@ The burst length, not transducer ringing, sets range resolution. Use an echo's *
 
 ## Working notes
 
-- **Supply isolation matters most in the analog front end.** Keep the speaker amp on its own supply, keep the preamp supply filtered (22 Ω + 100 µF + 0.1 µF at its pins), use a single-point ground, and re-run `bench/run_test.py ... crosstalk` after any wiring change.
+- **Supply isolation matters most in the analog front end.** Keep the H-bridge on its own supply, keep the preamp supply filtered (22 Ω + 100 µF + 0.1 µF at its pins), use a single-point ground, and re-run `bench/run_test.py ... crosstalk` after any wiring change.
+- **Transmit drive:** a DRV8871 breakout on 12 V gives 24 V peak-to-peak across the array (the audio amplifier it replaced gave 7.8 V, so about +10 dB). The array is 10 × 40T-12 in parallel, 12.5 nF in total. Each 24 V edge into that capacitance would draw ~3 A spikes, so each output has 10 Ω in series (peak ~1.2 A, ~250 ns edges), with 47 µF + 0.1 µF at VM and a twisted pair to the array. The spikes are shorter than the DRV8871's 2 µs current-limit blanking, so its ILIM setting never chops a burst.
 - The fitted preamp is an AD828. Profile `ad828-v1` (93 counts/mV, 37.5 dB, −3 dB band 75 Hz–5.1 kHz, ~1 count RMS noise) predates the 40 kHz conversion: the feedback caps across the 20 kΩ resistors are now 130 pF (~61 kHz pole per stage, ~−3 dB at 40 kHz for both), and the electret bias network has been removed. The receive element is loaded directly by the 2.2 kΩ input resistor.
 - The transducers' two-way steady-state response peaks at 40.0 kHz, with a −3 dB band of 39.2–41.0 kHz (1.8 kHz; profile `sweep-2026-10-22-50cyc`). That limits range resolution to ~10 cm whatever the waveform, so chirps and deconvolution have little to gain.
 - The hardware build is fragile. If the data looks physically implausible (noise, drift, gain, oscillation) but framing is clean (`ping_id` continuous, no resync warnings), suspect the hardware or wiring before the code.

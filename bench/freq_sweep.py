@@ -43,6 +43,10 @@ GATE_BEFORE_MS = 0.5        # echo window around the expected round trip
 RING_MS = 1.75              # echo window continues this long past the burst's end
 SETTLE_MS = 0.6             # ~4 ring-up time constants: past this a long burst's echo is steady
 MIN_SETTLED_MS = 0.3        # bursts with less settled time than this are read at their peak
+ONSET_K = 8                 # leading edge: envelope above median + ONSET_K sigma of pre-echo noise...
+ONSET_PEAK_FRACTION = 0.1   # ...and above this fraction of the echo's peak (so a weak precursor
+                            # at high SNR can't trigger it: 2026-10-24, 8 sigma read 3 cm short)
+ONSET_PEAK_MS = 3.0         # the echo's peak is looked for this long past the expected round trip
 DIRECT_MS = 1.5             # near-range window for the direct sound
 
 
@@ -98,13 +102,22 @@ def summarize(points):
             'bandwidth_3db_hz': (hi - lo) if lo is not None and hi is not None else None}
 
 
-def target_range_cm(x, fs_hz, t0_ms, target_m, k=8):
-    """Leading-edge range of the echo (echo_onset's k-sigma method), or None."""
+def target_range_cm(x, fs_hz, t0_ms, target_m, k=ONSET_K, peak_fraction=ONSET_PEAK_FRACTION):
+    """Leading-edge range of the echo, or None.
+
+    echo_onset's k-sigma method, with the threshold raised to peak_fraction of
+    the echo's peak when that is higher. The k-sigma threshold alone falls
+    with the noise, so at high SNR it fires on whatever small return precedes
+    the target; a fraction of the peak doesn't depend on SNR.
+    """
     locked, _ = analyze.split_ping_locked(x)
     w = locked - locked.mean()
     t_ms = t0_ms + np.arange(len(w)) / fs_hz * 1e3
     e = hilbert_envelope(analyze.bandpass(w, fs_hz, *analyze.SONAR_BAND_HZ))
-    o = onset(t_ms, e, 2 * target_m / C * 1e3, k)
+    expected_ms = 2 * target_m / C * 1e3
+    near = (t_ms > expected_ms - 1.3) & (t_ms < expected_ms + ONSET_PEAK_MS)
+    floor = peak_fraction * e[near].max() if near.any() else 0.0
+    o = onset(t_ms, e, expected_ms, k, floor)
     return None if o is None else o * C / 2 * 0.1
 
 

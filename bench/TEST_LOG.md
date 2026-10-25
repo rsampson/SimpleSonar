@@ -9,6 +9,78 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
+## 2026-10-24 (starfish, host) — DRV8871 H-bridge drive replaces the audio amplifier
+
+**Hardware:** DRV8871 breakout, VM = 11.36 V (no measurable sag during a
+burst), IN1/IN2 from GPIO25/26. 10 Ω in series with each output, then the
+10-element 40T-12 array (12.5 nF). Preamp and 40R-12 receiver unchanged.
+Sonar on starfish's USB power.
+**Firmware:** complementary burst timed off the CPU cycle counter, the bridge
+held in brake (IN1 = IN2 = 1) between bursts, `TONE` on the LEDC with IN2 inverted.
+
+**Scope (user):**
+- OUT1 and OUT2 are in antiphase, with OUT1 high first.
+- About 21 V swing across the array, against 2 × VM = 22.7 V.
+- A very brief undershoot on the falling edges, about 4 V. It is probably the probe ground lead.
+- Both outputs brake to 0 V after the burst, and both GPIOs are high between bursts. No glitches on the GPIOs.
+- Bursts are 300 ms apart, and the array's ringing is gone by about 150 µs.
+- Not yet checked: that each burst is exactly 10 cycles.
+
+**Mishap:** the scope ground clip on the array's OUT1 side shorted OUT1 to
+ground through its 10 Ω resistor during `TONE`. That is 1.2 A, about 7 W average
+in a 1/4 W part, and the resistor burned open: the echo dropped to the noise.
+The DRV8871 was undamaged (1.2 A is below its 3.7 A overcurrent trip). With the
+resistor replaced, the echo came back to the same strength as before, so both
+halves of the bridge still work. Keep the ground clip on circuit ground and use
+CH1 − CH2 for the voltage across the array.
+
+**Captures** (15 s each, 50 pings, analysed in the session, not kept): framing
+clean, 300.0 ms period, burst-to-sampling 1251/1252 µs (1255 on the first ping
+after START only). No clipping; raw 1463–2154.
+
+| | old amp (`wifi_off_0/1`, 10-22) | DRV8871 |
+|---|---|---|
+| out-of-band noise RMS | 2.35 / 2.36 counts | 1.31 |
+| out-of-band peak per ping (median) | 27.9 / 27.1 | 10.8 |
+| ping-locked (scene) | 7.3 / 8.1 | 26.4 |
+
+The ~27-count out-of-band peak in every ping (open since 10-22) is gone with
+the amplifier. It most likely came from the amplifier, though that isn't proven.
+The low signal seen late on 10-22 (±70 counts) no longer applies: echoes are now ±300 counts and up.
+
+**Sweeps** (`sweep-drv8871-2026-10-24`, `-50cyc`; target 139.7 cm, 55 in;
+10-22's were at 141.0 cm):
+
+| | peak | echo at peak | −3 dB band | leading edge |
+|---|---|---|---|---|
+| 10 cycles, old amp | 39.74 kHz | 158.8 counts | 3520 Hz | +0.5 cm (8σ) |
+| 10 cycles, DRV8871 | 39.75 kHz | 676.5 (+12.6 dB) | 3530 Hz | +0.2 cm |
+| 50 cycles, old amp | 40.00 kHz | 278.3 | 1764 Hz | +0.5 cm (8σ) |
+| 50 cycles, DRV8871 | 39.75 kHz | 723.7 (+8.3 dB) | 2470 Hz | −3.7 cm |
+
+- **Gain:** +8 to +13 dB, against +9.3 dB expected from 22.7 V vs 7.8 V peak-to-peak.
+- **Leading-edge fix:** `freq_sweep.py` first read −3.1 cm (10 cycles). The cause
+  was a weak return 3–7 cm before the echo, which now rises above the 8σ noise
+  threshold. The threshold is now the higher of 8σ and 10% of the echo's peak
+  (`ONSET_PEAK_FRACTION`), and both profiles were reanalysed. 10-22's profiles
+  weren't reanalysed; by the new rule their 10-cycle edge would read 142.4 cm (+1.4).
+- **50-cycle early echo:** in the 50-cycle run the echo itself starts rising at
+  ~135 cm (49% of peak by 137 cm), so it isn't a precursor. The target may have
+  been closer during that run, or a reflection may build up only with a long
+  burst. It needs repeating.
+- **Echo tail:** at 10 cycles the echo falls to 20% of its peak by 148 cm, where
+  the old amp's was still at 79%. That fits the user's echogram showing very
+  little dead zone beyond ~0.5 ft. The cause is not separated from geometry yet.
+
+**Echogram:** `plot_echogram_live.py` looked very good, with little dead zone
+beyond ~0.5 ft. The ESP32's web echogram ran on the tablet (1 station, 1 web client).
+
+**Unexplained:** once, before the first sweep, the ESP32 stopped sending
+anything and didn't answer commands. A reset pulse over RTS fixed it (normal
+POWERON boot). It didn't recur over ~10 minutes of sweeps with the tablet connected.
+
+**Decisions (user):** keep the DRV8871 drive. Crosstalk test left open.
+
 ## 2026-10-22 (starfish, host) — web echogram on the tablet (branch `esp32-wifi-ap`)
 
 **Setup:** firmware brings up the `SimpleSonar` AP and starts pinging at boot.
@@ -219,13 +291,18 @@ reverberation pile up, hence the 300 ms interval.
 - A third target distance (~1 m, where the echo overlaps the direct-sound tail).
 - Re-profile the preamp with the 130 pF caps (bench defaults are now 40 kHz /
   35-45 kHz); `ad828-v1` predates the change.
-- 40 kHz ranging: verified at 141 cm (+0.5 cm, `freq_sweep.py`). Other
-  distances are still to check, and `bench/echo_onset.py`'s timing windows were
-  sized for the 3.3 kHz burst.
-- Signal down from ±360 to ±70 counts late on 2026-10-22: check aim, preamp
-  and wiring.
+- 40 kHz ranging: verified at 141 cm (+0.5 cm, old amp) and 139.7 cm (+0.2 cm,
+  DRV8871, 10 cycles). Other distances are still to check, and
+  `bench/echo_onset.py`'s timing windows were sized for the 3.3 kHz burst.
+- The 50-cycle DRV8871 sweep's echo started ~4 cm early (2026-10-24): repeat it
+  with the target position checked.
 - MOSFET-input buffer for the 40R-12 (2.2 kΩ load costs ~6-9 dB per the datasheet).
-- Wi-Fi on battery power (separate regulators for preamp and amp): repeat the
-  A/B with data over the bridge.
+- Wi-Fi on battery power (separate regulators for preamp and H-bridge): repeat
+  the A/B with data over the bridge.
 - Long unattended tablet run of the web echogram since the bridge-write fix.
-- The ~27-count non-repeating out-of-band peak in every ping (Wi-Fi off too).
+- DRV8871: `run_test.py ... crosstalk` after the wiring change (edge-current
+  spikes); scope-check that a burst is exactly 10 cycles.
+- The ESP32 went silent once on 2026-10-24 until reset: watch for a recurrence.
+- Stage 2 of the H-bridge drive: anti-phase damping cycles (`DAMP <n>`). The
+  faster echo tail seen with the bridge may leave less to gain.
+- `bench/run_test.py` and `bench/README.md` prompts still say "speaker amp".

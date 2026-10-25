@@ -19,11 +19,16 @@ def response(f):
     return 1 / np.sqrt(1 + Q ** 2 * (f / F0 - F0 / f) ** 2)
 
 
-def pings(f, echo_amp, direct_amp=300.0, n=20, noise=2.0, seed=0, burst_ms=0.25, overshoot=0.0):
-    """Phase-locked direct-sound ring-down plus a gated echo burst at the target's round trip."""
+def pings(f, echo_amp, direct_amp=300.0, n=20, noise=2.0, seed=0, burst_ms=0.25, overshoot=0.0,
+          precursor_amp=0.0, precursor_cm=5.0):
+    """Phase-locked direct-sound ring-down plus a gated echo burst at the target's round trip,
+    optionally with a weak copy of the echo (a precursor) precursor_cm nearer."""
     rng = np.random.default_rng(seed)
     t_ms = T0_MS + np.arange(N) / FS * 1e3
     direct = direct_amp * np.exp(-(t_ms - T0_MS) / 0.4) * np.sin(2 * np.pi * f * t_ms * 1e-3)
+    if precursor_amp:
+        x = pings(f, precursor_amp, 0.0, n, 0.0, seed, burst_ms, overshoot)
+        direct = direct + np.roll(x[0] - BIAS, -int(round(2 * precursor_cm / 100 / C * FS)))
     t_echo = 2 * TARGET_M / C * 1e3
     rel = t_ms - t_echo
     # resonant transducers: exponential build-up over the burst, then ring-down
@@ -71,6 +76,16 @@ def test_target_range_from_leading_edge():
     # noise near the measured room floor (quiet gap 7-14 counts, TEST_LOG 2026-10-14)
     rng_cm = freq_sweep.target_range_cm(pings(40_000.0, 200.0, noise=40.0), FS, T0_MS, TARGET_M)
     assert rng_cm == pytest.approx(TARGET_M * 100, abs=3)
+
+
+def test_target_range_ignores_weak_precursor_at_high_snr():
+    # strong echo, low noise, and a return at 2% of it 5 cm nearer: above
+    # 8 sigma of the noise, but below a tenth of the echo's peak
+    x = pings(40_000.0, 800.0, noise=0.5, precursor_amp=16.0)
+    rng_cm = freq_sweep.target_range_cm(x, FS, T0_MS, TARGET_M)
+    assert rng_cm == pytest.approx(TARGET_M * 100, abs=1.5)
+    # without the peak-fraction floor the precursor sets the edge
+    assert freq_sweep.target_range_cm(x, FS, T0_MS, TARGET_M, peak_fraction=0.0) < TARGET_M * 100 - 3
 
 
 def test_long_burst_reaches_steady_state_inside_window():
