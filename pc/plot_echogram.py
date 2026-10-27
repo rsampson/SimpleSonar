@@ -12,10 +12,12 @@ INPUT_FILE = 'sensor_stream.csv'
 # transmitted burst is still ringing in the receiver (see make_ping_template's
 # docstring) - the matched filter response there is dominated by the pulse's
 # own autocorrelation sidelobes, not real echoes, so it's blanked out rather
-# than shown as if it were a return. The default (the burst's own length)
-# usually falls before the first sample, so nothing is blanked; set a larger
-# number to also hide near-range transducer ringdown.
-MIN_DISPLAY_RANGE_CM = None  # set to a number to override the auto estimate
+# than shown as if it were a return. The burst's own length usually falls
+# before the first sample, so the blanking is set by MIN_DISPLAY_RANGE_CM:
+# with the transmit array also receiving, its ringdown clips the ADC out to
+# ~35 cm and would otherwise set the dB scale. Used by plot_echogram_live.py
+# and the web page (firmware/src/web_page.h) too.
+MIN_DISPLAY_RANGE_CM = 40
 
 # Display in dB below the strongest echo in the whole recording. Larger
 # values reveal more of the weak-echo/noise floor; smaller values show only
@@ -72,7 +74,7 @@ def build_echogram(packets, background=None):
 
     template = make_ping_template(sample_dt_us)
     burst_range_cm = len(template) * sample_dt_us * US_TO_CM
-    blank_cm = MIN_DISPLAY_RANGE_CM if MIN_DISPLAY_RANGE_CM is not None else burst_range_cm
+    blank_cm = max(burst_range_cm, MIN_DISPLAY_RANGE_CM)
     blank_samples = int(np.count_nonzero(range_cm < blank_cm))
 
     columns = []
@@ -83,6 +85,7 @@ def build_echogram(packets, background=None):
         mf = matched_filter(values, template)
         env = hilbert_envelope(mf)
         env[:blank_samples] = np.nan
+        env[n_samples - len(template) + 1:] = np.nan  # the matched filter ran out of samples
         columns.append(env)
         ping_times.append(meta['T_ping_us'] / 1e6)  # seconds, ESP32 boot-relative
 

@@ -9,7 +9,7 @@ import subprocess
 import numpy as np
 import pytest
 
-from plot_echogram import hilbert_envelope
+from plot_echogram import MIN_DISPLAY_RANGE_CM, hilbert_envelope
 from plot_echogram_live import update_reference
 from plot_matched_filter import US_TO_CM, make_ping_template, matched_filter
 from plot_sensor_stream import range_axis_cm
@@ -75,7 +75,9 @@ def test_page_matches_python(ping, freq, cycles):
     np.testing.assert_allclose(js['mf'], mf, rtol=1e-9, atol=1e-6)
 
     env = hilbert_envelope(mf)
-    blank = range_axis_cm(meta, len(values)) < len(tpl) * meta['SampleDt_us'] * US_TO_CM
+    blank = range_axis_cm(meta, len(values)) < max(len(tpl) * meta['SampleDt_us'] * US_TO_CM,
+                                                   MIN_DISPLAY_RANGE_CM)
+    blank[len(values) - len(tpl) + 1:] = True
     col = np.array([np.nan if v is None else v for v in js['col']])
     assert np.array_equal(np.isnan(col), blank)
     np.testing.assert_allclose(col[~blank], env[~blank], rtol=1e-6, atol=1e-6)

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 from plot_sensor_stream import META_COLUMNS, parse_row, range_axis_cm
 from plot_matched_filter import make_ping_template, matched_filter, US_TO_CM
-from plot_echogram import hilbert_envelope
+from plot_echogram import MIN_DISPLAY_RANGE_CM, hilbert_envelope
 
 INPUT_FILE = 'sensor_stream.csv'
 
@@ -131,13 +131,14 @@ def process_new_packets(new_packets, live_state):
             live_state['range_cm'] = range_axis_cm(meta, n_samples)
             template = make_ping_template(sample_dt_us)
             live_state['template'] = template
-            blank_cm = len(template) * sample_dt_us * US_TO_CM
+            blank_cm = max(len(template) * sample_dt_us * US_TO_CM, MIN_DISPLAY_RANGE_CM)
             live_state['blank_cm'] = blank_cm
             live_state['blank_samples'] = int(np.count_nonzero(live_state['range_cm'] < blank_cm))
 
         mf = matched_filter(values, live_state['template'])
         env = hilbert_envelope(mf)
         env[:live_state['blank_samples']] = np.nan
+        env[len(env) - len(live_state['template']) + 1:] = np.nan  # the matched filter ran out of samples
 
         live_state['columns'].append(env)
         live_state['ping_times'].append(meta['T_ping_us'] / 1e6)

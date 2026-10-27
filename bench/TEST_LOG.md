@@ -9,6 +9,52 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
+## 2026-10-26 (starfish, host) — shared TX/RX: the transmit array as the receiver
+
+**Hardware:** the 40R-12 receiver is out of the signal path. The transmit array
+(DRV8871, 12 V) feeds a new single-stage LF356 preamp (see "Working notes" in
+`CLAUDE.md`): OUT1 → 3.3 kΩ → antiparallel diodes → 3.3 kΩ → summing junction,
+OUT2 → 3.3 kΩ, 1 MΩ feedback, gain ~100, + input on a 100k/100k virtual ground
+with 10 µF. The output is capacitor-coupled to GPIO34 through 1 kΩ.
+**Firmware:** the bridge now coasts (IN1 = IN2 = 0) between pings: 100 µs of
+brake to wake the DRV8871, burst, brake `BRAKE_AFTER_US`, then coast. New
+`DAMP <n>` command (anti-phase half-cycles after the burst, default 0).
+**Page:** blanks below 40 cm and the matched filter's last template-length; the axis starts at 40 cm.
+
+**Captures** (5–8 s over serial, analysed in the session, not kept): framing
+clean throughout; burst to sampling 1251–1253 µs.
+
+- **Wiring faults found:** with the diodes returned to ground the stage
+  saturated (ADC flat at 1055 counts, no signal). With OUT2's 3.3 kΩ to ground,
+  the network recharged the array through the summing junction after each brake.
+  That put a DC step of about +1.3 V at the start of sampling (τ ≈ 0.3 ms). Both
+  now go to virtual ground, and the step is down to +0.6 V at 22 cm and gone by 30 cm.
+- **Coast timing:** `bridge_coast()` via `pinMode()` took ~200 µs (sampling at
+  1453 µs); it is now a register write. With `BRAKE_AFTER_US` = 500 the ADC sat
+  flat at 4095 until the DRV8871 slept (~31 cm); at 100 that flat stretch is gone.
+- **Near-range overload:** 40 kHz content clips the ADC to ~30–35 cm and stays
+  at 400–500 counts to ~43 cm (no target). That makes the bright band at
+  40–50 cm that tops the echogram. A target at 1 ft showed up only as this band
+  at ~1.5 ft; its true echo falls in the overload.
+- **Active damping didn't help:** with DAMP 0–8, only DAMP 1 helped, a little at
+  40–45 cm (1421 → 1023 counts); higher values were worse, and the 2–3 m echo
+  fell from 10186 to 7500. Beyond 42 cm the ping-locked residue is a steady
+  46.0 kHz tone (sub-kHz resolution) decaying with τ ≈ 3.5 ms. That is far
+  longer than the transducer's ringing, and damping at 40 kHz can't reach it.
+  `CYCLES 2` cut real echoes by 7–10 dB but the band by only 4–6 dB, and the
+  clipping still ran to 37 cm. The band seems to be set off by the switching steps, not stored burst energy.
+- **Noise** (before the bias fixes): ~22 counts RMS past 3 m, with tones near
+  24 kHz and 46–48 kHz. The old chain had ~1.3 counts. Not re-measured since.
+
+**Open items:**
+- Scope the LF356 output (DC-coupled, before the coupling cap; trigger on
+  GPIO25, 200 µs/div): find the source of the overload and of the 46 kHz tone.
+  It could be a real ring, an alias of ~154 kHz, or a mechanical mode; try a
+  finger or foam on the array face and on the mount.
+- Target at 2 ft (61 cm) to confirm range accuracy beyond the overload.
+- Re-measure noise with the fixed bias; crosstalk/noise bench run in coast.
+- `DAMP` kept for further tuning, but it defaults to 0.
+
 ## 2026-10-24 (starfish, host) — DRV8871 H-bridge drive replaces the audio amplifier
 
 **Hardware:** DRV8871 breakout, VM = 11.36 V (no measurable sag during a

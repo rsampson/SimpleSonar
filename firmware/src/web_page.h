@@ -43,6 +43,7 @@ static const char WEB_PAGE[] = R"HTML(<!doctype html>
 // Signal processing: pure functions, mirroring the Python tools.
 const SPEED_OF_SOUND_M_S = 331.3 + 0.606 * 23.9;            // plot_matched_filter.py
 const US_TO_CM = (SPEED_OF_SOUND_M_S * 100 / 1e6) / 2;      // one-way range per us
+const MIN_DISPLAY_RANGE_CM = 40;                            // plot_echogram.py
 const HEADER_BYTES = 28;                                    // sync + '<IqqHI' (receive.py)
 
 // One packet (ArrayBuffer) -> {pingId, tPingUs, tSampleUs, n, dtUs, values}, or null.
@@ -140,11 +141,22 @@ function rangeAxisCm(pkt) {
   return r;
 }
 
-// One echogram column: envelope, with the burst's own length blanked (NaN).
+// The samples [start, end) an echogram column shows. Blanked: below the
+// burst's own length or MIN_DISPLAY_RANGE_CM, whichever is farther, and the
+// last tpl.length - 1, where the matched filter runs out of samples.
+function displayedSamples(pkt, tpl) {
+  const blankCm = Math.max(tpl.length * pkt.dtUs * US_TO_CM, MIN_DISPLAY_RANGE_CM), r = rangeAxisCm(pkt);
+  let start = 0;
+  while (start < pkt.n && r[start] < blankCm) start++;
+  return [start, Math.max(start, pkt.n - tpl.length + 1)];
+}
+
+// One echogram column: envelope, NaN outside displayedSamples().
 function processPing(pkt, tpl) {
   const env = hilbertEnvelope(matchedFilter(pkt.values, tpl));
-  const blankCm = tpl.length * pkt.dtUs * US_TO_CM, r = rangeAxisCm(pkt);
-  for (let i = 0; i < pkt.n && r[i] < blankCm; i++) env[i] = NaN;
+  const [start, end] = displayedSamples(pkt, tpl);
+  env.fill(NaN, 0, start);
+  env.fill(NaN, end);
   return env;
 }
 
@@ -174,7 +186,7 @@ const state = {
   config: { freq_hz: 40000, cycles: 10 },
   tpl: null, tplKey: '',
   columns: new Float32Array(WINDOW_PINGS * ROWS).fill(NaN), next: 0, filled: 0,
-  ref: 0, rangeCm: null, lastId: null, received: 0, missed: 0, times: [],
+  ref: 0, rangeCm: null, shown: null, lastId: null, received: 0, missed: 0, times: [],
 };
 
 const canvas = document.getElementById('echo');
@@ -204,6 +216,7 @@ function addPing(pkt) {
   }
   const env = processPing(pkt, state.tpl);
   state.rangeCm = rangeAxisCm(pkt);
+  state.shown = displayedSamples(pkt, state.tpl);
   let peak = 0;
   const col = state.next * ROWS, per = pkt.n / ROWS;
   for (let row = 0; row < ROWS; row++) {
@@ -252,7 +265,12 @@ function draw() {
   const pw = w - left - right, ph = h - top - bottom;
   ctx.fillStyle = '#101418'; ctx.fillRect(0, 0, w, h);
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(image, left, top, pw, ph);
+  // Only the rows inside displayedSamples(), so the range axis starts where
+  // the blanking ends.
+  const per = state.rangeCm ? state.rangeCm.length / ROWS : 1;
+  const row0 = state.shown ? Math.ceil(state.shown[0] / per) : 0;
+  const row1 = state.shown ? Math.max(row0 + 1, Math.floor(state.shown[1] / per)) : ROWS;
+  ctx.drawImage(image, 0, row0, WINDOW_PINGS, row1 - row0, left, top, pw, ph);
   ctx.strokeStyle = 'rgba(230,233,236,0.18)'; ctx.lineWidth = dpr;
   ctx.strokeRect(left - 0.5 * dpr, top - 0.5 * dpr, pw + dpr, ph + dpr);  // outline, visible before the window fills
 
@@ -261,7 +279,7 @@ function draw() {
   ctx.textBaseline = 'middle';
   const r = state.rangeCm;
   if (r) {
-    const r0 = r[0], r1 = r[r.length - 1], y = (cm) => top + (cm - r0) / (r1 - r0) * ph;
+    const r0 = r[row0 * per], r1 = r[row1 * per - 1], y = (cm) => top + (cm - r0) / (r1 - r0) * ph;
     ctx.textAlign = 'right';
     for (let cm = Math.ceil(r0 / 50) * 50; cm <= r1; cm += 50) {
       ctx.fillText(cm + ' cm', left - 6 * dpr, y(cm));
