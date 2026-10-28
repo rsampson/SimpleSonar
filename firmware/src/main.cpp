@@ -31,16 +31,18 @@ int16_t data_buffer[BUFFER_SIZE];
 #define PING_PIN_A 25           // DRV8871 IN1
 #define PING_PIN_B 26           // DRV8871 IN2
 #define BRAKE_BEFORE_US 100     // wake the DRV8871 from sleep before a burst
-#define BRAKE_AFTER_US 100      // damp the array after a burst, then coast
+#define BRAKE_AFTER_US 100      // default brake after a burst, then coast (BRAKE <us> changes it)
 #define ANALOG_PIN 34           // preamp output; the transmit array is also the receiver
 #define PING_FREQUENCY 40000     // Hz, the 40T/40R-12 resonance (40.0 +/- 1.0 kHz)
 // The 40T-12 is narrowband (~4 kHz bandwidth, Q~10), so it needs only
 // ~Q/pi =~ 3-4 cycles to reach steady amplitude, and a matched filter can't
 // meaningfully compress a longer single-tone burst (no bandwidth to exploit).
 // Extra cycles past that lengthen the burst and push out the near-field dead
-// zone, but add energy per ping. 10 cycles (250 us, ~4 cm) keeps margin
-// above the ramp-up while staying short.
-#define PING_CYCLES 10          // number of cycles to emit
+// zone, but add energy per ping. 20 cycles (500 us, ~9 cm) puts a null of the
+// burst's spectrum (every f/N = 2 kHz from 40 kHz) on 46 kHz, a high-Q
+// (~700) ring that the burst otherwise excites: against 10 cycles, whose
+// first sidelobe sits there, the 46 kHz ring is 5-7 dB lower (2026-10-27).
+#define PING_CYCLES 20          // number of cycles to emit
 // Half-cycles driven in anti-phase right after the burst, to cancel the
 // array's ringing (it is also the receiver). 0 = none.
 #define PING_DAMP_HALF_CYCLES 0
@@ -77,6 +79,9 @@ static_assert(1000000 % ADC_SAMPLE_FREQ_HZ == 0, "ADC_SAMPLE_FREQ_HZ must give a
 #define PING_CYCLES_MAX 200
 // DAMP <n> accepts anti-phase half-cycle counts in this range.
 #define PING_DAMP_MAX 20
+// BRAKE <us> accepts brake times up to this; coast must start before sampling
+// (AFTER_DELAY_US after the burst).
+#define BRAKE_AFTER_MAX_US 950
 // Bytes per ADC continuous-mode DMA frame (must be a multiple of
 // SOC_ADC_DIGI_RESULT_BYTES, 4 on ESP32). Kept well under the ~4092 byte
 // single-descriptor ceiling used elsewhere in the Arduino core's ADC
@@ -143,6 +148,11 @@ uint32_t ping_frequency_hz = PING_FREQUENCY;
 uint16_t ping_cycles = PING_CYCLES;
 // Anti-phase damping: PING_DAMP_HALF_CYCLES at boot or after RESET, changed by DAMP <n>.
 uint16_t damp_half_cycles = PING_DAMP_HALF_CYCLES;
+// Brake after the burst: BRAKE_AFTER_US at boot or after RESET, changed by BRAKE <us>.
+// The short holds the array's terminals at 0 V but dissipates little, so the
+// elements keep ringing mechanically; a longer brake lets more of that decay
+// before coast hands the array to the preamp.
+uint16_t brake_after_us = BRAKE_AFTER_US;
 
 // Both bridge inputs high: brake, the array shorted.
 static void bridge_brake() {
@@ -438,6 +448,16 @@ void handle_serial_command(const String &command) {
         }
         damp_half_cycles = (uint16_t)requested;
         out.printf("DAMP set: %u anti-phase half-cycles\n", (unsigned)damp_half_cycles);
+    } else if (normalized.length() > 6 && normalized.substring(0, 6).equalsIgnoreCase("BRAKE ")) {
+        String arg = normalized.substring(6);
+        arg.trim();
+        long requested = arg.toInt();
+        if (requested < 0 || requested > BRAKE_AFTER_MAX_US || (requested == 0 && arg != "0")) {
+            out.printf("BRAKE rejected: %s outside 0-%d us\n", arg.c_str(), BRAKE_AFTER_MAX_US);
+            return;
+        }
+        brake_after_us = (uint16_t)requested;
+        out.printf("BRAKE set: %u us after the burst\n", (unsigned)brake_after_us);
     } else if (normalized.equalsIgnoreCase("RESET")) {
         // Back to the compiled-in drive settings. Opening the serial port
         // doesn't reliably reboot the ESP32, so FREQ/CYCLES from an earlier
@@ -450,8 +470,9 @@ void handle_serial_command(const String &command) {
         ping_frequency_hz = PING_FREQUENCY;
         ping_cycles = PING_CYCLES;
         damp_half_cycles = PING_DAMP_HALF_CYCLES;
-        out.printf("RESET done: %lu Hz, %u cycles, damp %u\n", (unsigned long)ping_frequency_hz,
-                   (unsigned)ping_cycles, (unsigned)damp_half_cycles);
+        brake_after_us = BRAKE_AFTER_US;
+        out.printf("RESET done: %lu Hz, %u cycles, damp %u, brake %u us\n", (unsigned long)ping_frequency_hz,
+                   (unsigned)ping_cycles, (unsigned)damp_half_cycles, (unsigned)brake_after_us);
     } else if (normalized.equalsIgnoreCase("WIFI ON")) {
         if (wifi_start()) {
             out.printf("WIFI on: SSID %s (open), bridge %s:%d, web http://%s\n", WIFI_AP_SSID,
@@ -482,9 +503,10 @@ static esp_err_t page_handler(httpd_req_t *req) {
 static esp_err_t config_handler(httpd_req_t *req) {
     char json[160];
     snprintf(json, sizeof(json),
-             "{\"freq_hz\":%lu,\"cycles\":%u,\"damp\":%u,\"sample_rate_hz\":%d,\"interval_ms\":%d,"
-             "\"samples\":%d}",
+             "{\"freq_hz\":%lu,\"cycles\":%u,\"damp\":%u,\"brake_us\":%u,\"sample_rate_hz\":%d,"
+             "\"interval_ms\":%d,\"samples\":%d}",
              (unsigned long)ping_frequency_hz, (unsigned)ping_cycles, (unsigned)damp_half_cycles,
+             (unsigned)brake_after_us,
              ADC_SAMPLE_FREQ_HZ, PING_INTERVAL_MS, BUFFER_SIZE);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
@@ -668,13 +690,13 @@ void process_commands() {
 // through ping_cycles x (forward, reverse), then damp_half_cycles more
 // half-cycles with the polarity flipped (anti-phase, so they oppose the
 // array's ringing instead of feeding it), and back to brake (the caller
-// returns it to coast after BRAKE_AFTER_US), with each pin edge timed off
+// returns it to coast after brake_after_us), with each pin edge timed off
 // the CPU cycle counter inside a critical section, from IRAM. That gives the exact cycle count
 // at any FREQ, a burst start that is a fixed number of CPU cycles after the
 // returned timestamp (so each echo's phase against the ADC window repeats
 // from ping to ping, for coherent averaging), and a waveform that can later
 // be extended, e.g. with anti-phase damping cycles. Interrupts on this core
-// are off for the burst: 250 us at the default 10 cycles, 5 ms at 200.
+// are off for the burst: 500 us at the default 20 cycles, 5 ms at 200.
 //
 // Half-period edges are spaced cpu_hz / (2 f) ticks apart, carrying the
 // remainder Bresenham-style so the average frequency is exact (each edge is
@@ -754,7 +776,7 @@ void loop() {
     // can last hundreds of us to a few ms and will show up as a spurious
     // near-range echo unless this is long enough - verify on a scope.
     const unsigned int AFTER_DELAY_US = 1000;
-    static_assert(BRAKE_AFTER_US < AFTER_DELAY_US, "coast must start before sampling");
+    static_assert(BRAKE_AFTER_MAX_US < AFTER_DELAY_US, "coast must start before sampling");
 
     const uint32_t loop_start_ms = millis();
 
@@ -765,11 +787,11 @@ void loop() {
     header.num_samples = BUFFER_SIZE;
 
     header.t_ping_us = emit_burst(); // timestamp of the burst's true start
-    delayMicroseconds(BRAKE_AFTER_US);
+    delayMicroseconds(brake_after_us);
     // Coast: the array can receive from here on. A register write, because
     // bridge_coast()'s pinMode() calls take ~200 us.
     REG_WRITE(GPIO_OUT_W1TC_REG, (1UL << PING_PIN_A) | (1UL << PING_PIN_B));
-    delayMicroseconds(AFTER_DELAY_US - BRAKE_AFTER_US);
+    delayMicroseconds(AFTER_DELAY_US - brake_after_us);
 
     header.t_sample_us = esp_timer_get_time();
     header.sample_dt_us = 1000000UL / ADC_SAMPLE_FREQ_HZ;

@@ -288,7 +288,12 @@ def _probe_port(port, timeout_s=3.0):
 
     try:
         time.sleep(2)  # in case the open rebooted the ESP32 (not every adapter does)
-        ser.reset_input_buffer()
+        # The firmware starts pinging at boot (PING_AUTOSTART), and the
+        # byte-at-a-time read below can't keep up with a running stream:
+        # the kernel buffer overflows and the START reply line is lost.
+        # Stop any pinging and let the port go quiet first.
+        send_control_command(ser, STOP_COMMAND)
+        _drain_until_quiet(ser)
         send_control_command(ser, START_COMMAND)
 
         # The firmware's response to START is the plain-text debug line

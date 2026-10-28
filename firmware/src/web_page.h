@@ -183,7 +183,7 @@ for (let i = 0; i < 256; i++) {
 }
 
 const state = {
-  config: { freq_hz: 40000, cycles: 10 },
+  config: { freq_hz: 40000, cycles: 20 },
   tpl: null, tplKey: '',
   columns: new Float32Array(WINDOW_PINGS * ROWS).fill(NaN), next: 0, filled: 0,
   ref: 0, rangeCm: null, shown: null, lastId: null, received: 0, missed: 0, times: [],

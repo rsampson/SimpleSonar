@@ -14,7 +14,7 @@ def range_axis_cm(meta, n_samples):
     """One-way range (cm) of each sample, measured from the start of the burst.
 
     Sampling doesn't begin until `T_sample_us - T_ping_us` after the burst
-    starts (burst duration + settle delay + overheads, ~1.24 ms / ~21 cm in
+    starts (burst duration + settle delay + overheads, ~1.5 ms / ~26 cm in
     the current firmware), so sample i is `offset + i * dt` after the ping,
     not `i * dt`.
     """

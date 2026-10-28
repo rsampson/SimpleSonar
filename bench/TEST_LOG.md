@@ -9,6 +9,50 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
+## 2026-10-27 (crab, laptop) — array ring-down: 500 Ω load, BRAKE, 20-cycle burst
+
+**Hardware:** as on 10-26 (10-element array as TX and RX, LF356 preamp on
+±6 V), plus **500 Ω across the array**. A 1.3 mH inductor tried in parallel
+(with the 500 Ω) made the ringing much worse and was removed. A single element
+in place of the array was also worse. **Firmware:** flashed master, then the
+new `BRAKE <µs>` command and the 20-cycle default (below). No target placed;
+captures were scratch files, not kept.
+
+**Results:**
+- **Not amplifier oscillation.** The overload repeats in step with the ping
+  (80–86% of the per-ping power is the same every ping) and decays, at the
+  array's frequencies. A hand on the preamp front end changed nothing. A scope
+  on the transducer terminals shows the array itself ringing hard; a finger on
+  the transducer changed nothing (the vibrating element is inside the can).
+- **500 Ω load:** before it, the ADC clipped until 2.0–2.3 ms after the burst
+  (ping-locked RMS 1795 counts at 1.25–1.5 ms). With it, nothing clips at any
+  setting (~574 counts). It is near the optimum 1/(ωC₀) ≈ 280 Ω for the array.
+  For a single element the optimum is ~2.8 kΩ, which explains why one element
+  with 500 Ω was worse.
+- **Brake length doesn't matter:** `BRAKE` 100–900 µs left the early 40 kHz
+  content (680–750 counts at 1.4 ms) and the 46 kHz tail unchanged. The short
+  doesn't drain the elements, and the 40 kHz content near the start is
+  probably near-range echoes or pickup, not stored ringing.
+- **46 kHz ring:** 45.99 kHz, τ ≈ 5 ms (Q ≈ 700), peaks 2–3 ms after the burst.
+  It is part burst-excited: burst length vs its envelope RMS at 2–3 / 8–12 ms
+  (counts): 10 cycles 66–71 / 11, 15 → 53 / 8, **20 → 38 / 5**, 25 → 70 / 7.
+  20 cycles puts a spectral null on 46 kHz (theory 10 > 15 = 25 > 20 = 0; 25
+  doesn't fit). What remains at 20 is likely set off by the switching steps.
+  The 40 kHz content was the same for all lengths.
+- **Noise:** ~25 counts RMS per ping (old chain 1.3). The averaged 46 kHz ring
+  falls below it after ~3–6 ms, so beyond ~0.5–1 m noise is now the limit.
+
+**Changes (committed):** `PING_CYCLES` 10 → 20 (firmware, matched filter, web
+page fallback; sampling now starts 1.50 ms / 26 cm after the burst).
+`BRAKE <µs>` (0–950, RESET → 100). `receive.py`'s port probe sends STOP first:
+the firmware pings from boot and the probe missed START's reply in the stream.
+
+**Open items:**
+- Find the ~25 count noise.
+- The rest of the 46 kHz excitation: try softer switching steps (brake before
+  and after the burst).
+- Target at 2 ft (61 cm) to check range accuracy past the overload with 20 cycles.
+
 ## 2026-10-26 (starfish, host) — shared TX/RX: the transmit array as the receiver
 
 **Hardware:** the 40R-12 receiver is out of the signal path. The transmit array
@@ -347,8 +391,7 @@ reverberation pile up, hence the 300 ms interval.
   the A/B with data over the bridge.
 - Long unattended tablet run of the web echogram since the bridge-write fix.
 - DRV8871: `run_test.py ... crosstalk` after the wiring change (edge-current
-  spikes); scope-check that a burst is exactly 10 cycles.
+  spikes); scope-check that a burst is exactly 20 cycles (the default since 2026-10-27).
 - The ESP32 went silent once on 2026-10-24 until reset: watch for a recurrence.
-- Stage 2 of the H-bridge drive: anti-phase damping cycles (`DAMP <n>`). The
-  faster echo tail seen with the bridge may leave less to gain.
+- Per-ping noise ~25 counts RMS on the shared TX/RX chain (2026-10-27); find its source.
 - `bench/run_test.py` and `bench/README.md` prompts still say "speaker amp".
