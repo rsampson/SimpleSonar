@@ -11,7 +11,7 @@ import pytest
 
 from plot_echogram import MIN_DISPLAY_RANGE_CM, hilbert_envelope
 from plot_echogram_live import update_reference
-from plot_matched_filter import US_TO_CM, make_ping_template, matched_filter
+from plot_matched_filter import US_TO_CM, make_receive_filter, matched_filter
 from plot_sensor_stream import range_axis_cm
 from web_preview import load_page, packet_bytes
 
@@ -68,7 +68,7 @@ def test_page_matches_python(ping, freq, cycles):
                             meta['NumSamples'], meta['SampleDt_us']]
     assert js['values'] == values[:5]
 
-    tpl = make_ping_template(meta['SampleDt_us'], freq_hz=freq, cycles=cycles)
+    tpl = make_receive_filter(meta['SampleDt_us'], freq_hz=freq, cycles=cycles)
     np.testing.assert_allclose(js['tpl'], tpl, atol=1e-12)
 
     mf = matched_filter(values, tpl)

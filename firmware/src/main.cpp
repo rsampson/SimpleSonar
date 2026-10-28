@@ -153,6 +153,37 @@ uint16_t damp_half_cycles = PING_DAMP_HALF_CYCLES;
 // elements keep ringing mechanically; a longer brake lets more of that decay
 // before coast hands the array to the preamp.
 uint16_t brake_after_us = BRAKE_AFTER_US;
+// Kicks: short drive pulses inside the brake after the burst, each set by
+// KICK <delay_ns> <width_ns> <+|-> (delay from the burst's end; + forward,
+// - reverse). The array's 46 kHz ring is a linear, high-Q mode that the burst
+// excites and the brake doesn't touch; a narrow pulse adds a kick to it whose
+// phase is set by the delay and size by the width, so the right pulse cancels
+// the ring. RESET or KICK CLEAR removes them. They must end within the brake.
+#define KICK_MAX 32
+#define KICK_MIN_WIDTH_NS 200
+#define KICK_MAX_WIDTH_NS 50000
+struct Kick {
+    uint32_t delay_ns;
+    uint32_t width_ns;
+    bool forward;
+};
+Kick kicks[KICK_MAX];
+uint8_t kick_count = 0;
+// CPU cycle count at the burst's start and the ticks from there to its end
+// (the final brake edge, before any kicks). Coast and sampling are timed
+// from here on the cycle counter: esp_timer's 1 us steps put ~0.3 us RMS of
+// jitter between burst and sampling, 5 degrees at 47 kHz.
+uint32_t burst_c_start = 0;
+uint32_t burst_end_ticks = 0;
+
+// End of the last kick in ns after the burst's end (0 with none).
+static uint32_t kicks_end_ns() {
+    uint32_t end = 0;
+    for (uint8_t i = 0; i < kick_count; i++) {
+        end = max(end, kicks[i].delay_ns + kicks[i].width_ns);
+    }
+    return end;
+}
 
 // Both bridge inputs high: brake, the array shorted.
 static void bridge_brake() {
@@ -456,8 +487,52 @@ void handle_serial_command(const String &command) {
             out.printf("BRAKE rejected: %s outside 0-%d us\n", arg.c_str(), BRAKE_AFTER_MAX_US);
             return;
         }
+        if ((uint32_t)requested * 1000 < kicks_end_ns()) {
+            out.printf("BRAKE rejected: kicks run to %lu ns after the burst\n", (unsigned long)kicks_end_ns());
+            return;
+        }
         brake_after_us = (uint16_t)requested;
         out.printf("BRAKE set: %u us after the burst\n", (unsigned)brake_after_us);
+    } else if (normalized.equalsIgnoreCase("KICK CLEAR")) {
+        kick_count = 0;
+        out.println("KICK cleared");
+    } else if (normalized.length() > 5 && normalized.substring(0, 5).equalsIgnoreCase("KICK ")) {
+        // KICK <delay_ns> <width_ns> <+|->
+        char pol = 0;
+        long delay_ns = -1, width_ns = -1;
+        int n = sscanf(normalized.c_str() + 5, "%ld %ld %c", &delay_ns, &width_ns, &pol);
+        if (n != 3 || (pol != '+' && pol != '-') || delay_ns < 0 || width_ns < KICK_MIN_WIDTH_NS ||
+            width_ns > KICK_MAX_WIDTH_NS) {
+            out.printf("KICK rejected: want <delay_ns> <width_ns %d-%d> <+|->\n", KICK_MIN_WIDTH_NS,
+                       KICK_MAX_WIDTH_NS);
+            return;
+        }
+        if (kick_count >= KICK_MAX) {
+            out.printf("KICK rejected: already %d kicks\n", KICK_MAX);
+            return;
+        }
+        if ((uint32_t)(delay_ns + width_ns) > (uint32_t)brake_after_us * 1000) {
+            out.printf("KICK rejected: ends at %ld ns, after the %u us brake\n", delay_ns + width_ns,
+                       (unsigned)brake_after_us);
+            return;
+        }
+        // Kept in delay order and must not overlap.
+        uint8_t at = kick_count;
+        while (at > 0 && kicks[at - 1].delay_ns > (uint32_t)delay_ns) {
+            at--;
+        }
+        if ((at > 0 && kicks[at - 1].delay_ns + kicks[at - 1].width_ns > (uint32_t)delay_ns) ||
+            (at < kick_count && (uint32_t)(delay_ns + width_ns) > kicks[at].delay_ns)) {
+            out.println("KICK rejected: overlaps another kick");
+            return;
+        }
+        for (uint8_t i = kick_count; i > at; i--) {
+            kicks[i] = kicks[i - 1];
+        }
+        kicks[at] = {(uint32_t)delay_ns, (uint32_t)width_ns, pol == '+'};
+        kick_count++;
+        out.printf("KICK set: %ld ns after the burst, %ld ns, %c (%u kicks)\n", delay_ns, width_ns, pol,
+                   (unsigned)kick_count);
     } else if (normalized.equalsIgnoreCase("RESET")) {
         // Back to the compiled-in drive settings. Opening the serial port
         // doesn't reliably reboot the ESP32, so FREQ/CYCLES from an earlier
@@ -471,7 +546,8 @@ void handle_serial_command(const String &command) {
         ping_cycles = PING_CYCLES;
         damp_half_cycles = PING_DAMP_HALF_CYCLES;
         brake_after_us = BRAKE_AFTER_US;
-        out.printf("RESET done: %lu Hz, %u cycles, damp %u, brake %u us\n", (unsigned long)ping_frequency_hz,
+        kick_count = 0;
+        out.printf("RESET done: %lu Hz, %u cycles, damp %u, brake %u us, kicks cleared\n", (unsigned long)ping_frequency_hz,
                    (unsigned)ping_cycles, (unsigned)damp_half_cycles, (unsigned)brake_after_us);
     } else if (normalized.equalsIgnoreCase("WIFI ON")) {
         if (wifi_start()) {
@@ -503,10 +579,10 @@ static esp_err_t page_handler(httpd_req_t *req) {
 static esp_err_t config_handler(httpd_req_t *req) {
     char json[160];
     snprintf(json, sizeof(json),
-             "{\"freq_hz\":%lu,\"cycles\":%u,\"damp\":%u,\"brake_us\":%u,\"sample_rate_hz\":%d,"
+             "{\"freq_hz\":%lu,\"cycles\":%u,\"damp\":%u,\"brake_us\":%u,\"kicks\":%u,\"sample_rate_hz\":%d,"
              "\"interval_ms\":%d,\"samples\":%d}",
              (unsigned long)ping_frequency_hz, (unsigned)ping_cycles, (unsigned)damp_half_cycles,
-             (unsigned)brake_after_us,
+             (unsigned)brake_after_us, (unsigned)kick_count,
              ADC_SAMPLE_FREQ_HZ, PING_INTERVAL_MS, BUFFER_SIZE);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
@@ -742,7 +818,26 @@ int64_t IRAM_ATTR emit_burst() {
             edge++;
         }
     }
+    // The last edge above was the final brake, at `edge - half step`.
+    const uint32_t end_ticks = edge - half_q;
+    const uint32_t ticks_per_us = cpu_hz / 1000000UL;
+    for (uint8_t i = 0; i < kick_count; i++) {
+        const uint32_t on = end_ticks + kicks[i].delay_ns * ticks_per_us / 1000;
+        const uint32_t off = on + kicks[i].width_ns * ticks_per_us / 1000;
+        while (esp_cpu_get_cycle_count() - c_start < on) {
+        }
+        if (kicks[i].forward) {
+            REG_WRITE(GPIO_OUT_W1TC_REG, mask_b); // from brake (1/1) to forward (1/0)
+        } else {
+            REG_WRITE(GPIO_OUT_W1TC_REG, mask_a); // to reverse (0/1)
+        }
+        while (esp_cpu_get_cycle_count() - c_start < off) {
+        }
+        REG_WRITE(GPIO_OUT_W1TS_REG, mask_a | mask_b); // brake
+    }
     portEXIT_CRITICAL(&burst_mux);
+    burst_c_start = c_start;
+    burst_end_ticks = end_ticks;
 
     return t_start;
 }
@@ -787,11 +882,15 @@ void loop() {
     header.num_samples = BUFFER_SIZE;
 
     header.t_ping_us = emit_burst(); // timestamp of the burst's true start
-    delayMicroseconds(brake_after_us);
+    // Timed from the burst's end, so kicks inside the brake don't move them.
+    const uint32_t ticks_per_us = getCpuFrequencyMhz();
+    while (esp_cpu_get_cycle_count() - burst_c_start < burst_end_ticks + brake_after_us * ticks_per_us) {
+    }
     // Coast: the array can receive from here on. A register write, because
     // bridge_coast()'s pinMode() calls take ~200 us.
     REG_WRITE(GPIO_OUT_W1TC_REG, (1UL << PING_PIN_A) | (1UL << PING_PIN_B));
-    delayMicroseconds(AFTER_DELAY_US - brake_after_us);
+    while (esp_cpu_get_cycle_count() - burst_c_start < burst_end_ticks + AFTER_DELAY_US * ticks_per_us) {
+    }
 
     header.t_sample_us = esp_timer_get_time();
     header.sample_dt_us = 1000000UL / ADC_SAMPLE_FREQ_HZ;

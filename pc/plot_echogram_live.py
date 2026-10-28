@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from plot_sensor_stream import META_COLUMNS, parse_row, range_axis_cm
-from plot_matched_filter import make_ping_template, matched_filter, US_TO_CM
+from plot_matched_filter import make_receive_filter, matched_filter, US_TO_CM
 from plot_echogram import MIN_DISPLAY_RANGE_CM, hilbert_envelope
 
 INPUT_FILE = 'sensor_stream.csv'
@@ -129,7 +129,7 @@ def process_new_packets(new_packets, live_state):
             live_state['n_samples'] = n_samples
             live_state['sample_dt_us'] = sample_dt_us
             live_state['range_cm'] = range_axis_cm(meta, n_samples)
-            template = make_ping_template(sample_dt_us)
+            template = make_receive_filter(sample_dt_us)
             live_state['template'] = template
             blank_cm = max(len(template) * sample_dt_us * US_TO_CM, MIN_DISPLAY_RANGE_CM)
             live_state['blank_cm'] = blank_cm

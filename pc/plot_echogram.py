@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from plot_sensor_stream import load_packets, range_axis_cm
-from plot_matched_filter import make_ping_template, matched_filter, US_TO_CM
+from plot_matched_filter import make_receive_filter, matched_filter, US_TO_CM
 
 INPUT_FILE = 'sensor_stream.csv'
 
@@ -72,7 +72,7 @@ def build_echogram(packets, background=None):
     sample_dt_us = packets[0][0]['SampleDt_us']
     range_cm = range_axis_cm(packets[0][0], n_samples)
 
-    template = make_ping_template(sample_dt_us)
+    template = make_receive_filter(sample_dt_us)
     burst_range_cm = len(template) * sample_dt_us * US_TO_CM
     blank_cm = max(burst_range_cm, MIN_DISPLAY_RANGE_CM)
     blank_samples = int(np.count_nonzero(range_cm < blank_cm))

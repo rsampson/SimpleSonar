@@ -41,6 +41,31 @@ def make_ping_template(sample_dt_us, freq_hz=PING_FREQUENCY_HZ, cycles=PING_CYCL
     return template - template.mean()
 
 
+# The receive filter spans this many burst lengths (see make_receive_filter).
+RECEIVE_FILTER_SPAN = 1.5
+
+
+def make_receive_filter(sample_dt_us, freq_hz=PING_FREQUENCY_HZ, cycles=PING_CYCLES):
+    """The reference the echoes are correlated with: a Blackman-tapered tone.
+
+    The array rings after each burst on several sharp lines at 45-48 kHz.
+    Correlating with the burst itself (make_ping_template, a rectangular
+    gate) passes them ~30 dB down, through the gate's sidelobes, and the
+    ring is strong enough that this left it 4-11 dB above the noise at
+    35-100 cm. A Blackman taper over
+    RECEIVE_FILTER_SPAN x the burst has sidelobes far below that, putting the
+    ring 25-40 dB under the noise, at no loss in echo SNR (the echo, shaped
+    by the transducers' ~2 kHz band, has little energy where the gate's
+    spectrum and the taper's differ) and the same ~10 cm peak width. With
+    the 1.5x span its peak also sits within ~0.3 cm of the echo's start.
+    """
+    dt_s = sample_dt_us * 1e-6
+    n = max(int(round(RECEIVE_FILTER_SPAN * cycles / freq_hz / dt_s)), 1)
+    k = np.arange(n)
+    template = np.blackman(n) * np.sin(2 * np.pi * freq_hz * k * dt_s)
+    return template - template.mean()
+
+
 def matched_filter(values, template):
     """Cross-correlate the recorded signal against the ping template.
 
@@ -82,11 +107,10 @@ def main():
     fig, (ax_raw, ax_mf) = plt.subplots(2, 1, figsize=(10, 8), sharex=False)
 
     meta0, values0 = packets[0]
-    template = make_ping_template(meta0['SampleDt_us'])
+    template = make_receive_filter(meta0['SampleDt_us'])
     burst_range_cm = len(template) * meta0['SampleDt_us'] * US_TO_CM
-    print(f"Ping template: {len(template)} samples covering the "
-          f"{PING_CYCLES}-cycle / {PING_FREQUENCY_HZ} Hz burst "
-          f"(~{burst_range_cm:.1f} cm of range resolution loss near t=0).")
+    print(f"Receive filter: {len(template)} samples, Blackman-tapered over {RECEIVE_FILTER_SPAN}x the "
+          f"{PING_CYCLES}-cycle / {PING_FREQUENCY_HZ} Hz burst (~{burst_range_cm:.1f} cm).")
 
     line_raw, = ax_raw.plot([], [])
     ax_raw.set_ylabel("Amplitude (ADC counts)")
@@ -101,7 +125,7 @@ def main():
         idx = state['idx']
         meta, values = packets[idx]
         sample_dt_us = meta['SampleDt_us']
-        tmpl = make_ping_template(sample_dt_us)
+        tmpl = make_receive_filter(sample_dt_us)
 
         n = len(values)
         range_cm = range_axis_cm(meta, n)

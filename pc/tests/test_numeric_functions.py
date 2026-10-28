@@ -122,9 +122,36 @@ def test_background_subtraction_removes_static_clutter_and_keeps_the_echo():
     # with the background removed the strongest return is at the echo and it
     # stands far above the residual; without it the static clutter (50 counts
     # RMS vs the 100-count echo) leaves the echo barely above its surroundings
-    assert abs(int(np.nanargmax(clean.mean(axis=1))) - 300) <= 3
+    # The tapered receive filter peaks on the echo's centre: for this ideal
+    # (unsmeared) burst that is half their length difference before its start.
+    from plot_matched_filter import make_receive_filter
+    shift = (len(make_receive_filter(10)) - len(make_ping_template(10))) / 2
+    assert abs(int(np.nanargmax(clean.mean(axis=1))) - (300 - shift)) <= 3
     echo = np.nanmean(clean[295:310])
     elsewhere = np.nanmedian(clean[400:])
     assert echo > 20 * elsewhere
     plain_ratio = np.nanmean(plain[295:310]) / np.nanmedian(plain[400:])
     assert echo / elsewhere > 5 * plain_ratio
+
+
+def test_receive_filter_rejects_the_ring_band_and_keeps_the_echo():
+    from plot_matched_filter import make_receive_filter
+    dt_us, fs = 5, 200e3
+    filt = make_receive_filter(dt_us)
+    assert np.isclose(filt.mean(), 0.0, atol=1e-9)
+    assert len(filt) == round(1.5 * PING_CYCLES / PING_FREQUENCY_HZ / (dt_us * 1e-6))
+
+    def gain(f):
+        t = np.arange(4000) / fs
+        env = np.abs(matched_filter(np.sin(2 * np.pi * f * t), filt))[200:3000]
+        return env.max()
+
+    on = gain(40e3)
+    for f in (45e3, 46e3, 47.8e3):  # the array's spurious ring lines
+        assert 20 * np.log10(gain(f) / on) < -50
+    # The rectangular burst passes 47.8 kHz (on a sidelobe) only ~33 dB down.
+    rect = make_ping_template(dt_us)
+    t = np.arange(4000) / fs
+    leak = np.abs(matched_filter(np.sin(2 * np.pi * 47.8e3 * t), rect))[200:3000].max()
+    full = np.abs(matched_filter(np.sin(2 * np.pi * 40e3 * t), rect))[200:3000].max()
+    assert 20 * np.log10(leak / full) > -40

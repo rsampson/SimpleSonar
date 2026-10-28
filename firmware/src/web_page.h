@@ -63,15 +63,19 @@ function parsePacket(buf) {
   };
 }
 
-// make_ping_template(): the gated square-wave burst, zero-mean. Half-cycle
-// index in exact integer steps, so edge samples don't flip on rounding.
+// make_receive_filter(): a Blackman-tapered tone over 1.5x the burst,
+// zero-mean. It rejects the array's 45-48 kHz ring far better than the
+// rectangular burst would (see plot_matched_filter.py).
 function makeTemplate(dtUs, freqHz, cycles) {
-  const n = Math.max(Math.round(cycles / freqHz / (dtUs * 1e-6)), 1);
+  const dt = dtUs * 1e-6;
+  const n = Math.max(Math.round(1.5 * cycles / freqHz / dt), 1);
   const t = new Float64Array(n);
-  const step = Math.round(dtUs) * 2 * Math.round(freqHz);
   let sum = 0;
   for (let k = 0; k < n; k++) {
-    t[k] = Math.floor(k * step / 1e6) % 2 === 0 ? 1 : -1;
+    // numpy.blackman(n); n == 1 gives [1].
+    const w = n === 1 ? 1 : 0.42 - 0.5 * Math.cos(2 * Math.PI * k / (n - 1)) +
+      0.08 * Math.cos(4 * Math.PI * k / (n - 1));
+    t[k] = w * Math.sin(2 * Math.PI * freqHz * k * dt);
     sum += t[k];
   }
   for (let k = 0; k < n; k++) t[k] -= sum / n;

@@ -9,14 +9,17 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
-## 2026-10-27 (crab, laptop) — array ring-down: 500 Ω load, BRAKE, 20-cycle burst
+## 2026-10-27 (crab, laptop) — array ring-down: 500 Ω load, BRAKE, 20-cycle burst, ring-rejecting receive filter
 
 **Hardware:** as on 10-26 (10-element array as TX and RX, LF356 preamp on
 ±6 V), plus **500 Ω across the array**. A 1.3 mH inductor tried in parallel
 (with the 500 Ω) made the ringing much worse and was removed. A single element
 in place of the array was also worse. **Firmware:** flashed master, then the
-new `BRAKE <µs>` command and the 20-cycle default (below). No target placed;
-captures were scratch files, not kept.
+new `BRAKE <µs>` command and the 20-cycle default (below), then `KICK`,
+cycle-counter coast/sampling timing and the tapered receive filter (later
+results). No target placed. Captures are in `bench/profiles/ring-2026-10-27/raw/`
+on crab (`brake*.csv`, `cyc*.csv`, `jit_cycles.csv`, `fresh.csv` = 60 pings at
+defaults with the final firmware); the scripts that made them sit beside it.
 
 **Results:**
 - **Not amplifier oscillation.** The overload repeats in step with the ping
@@ -42,16 +45,57 @@ captures were scratch files, not kept.
 - **Noise:** ~25 counts RMS per ping (old chain 1.3). The averaged 46 kHz ring
   falls below it after ~3–6 ms, so beyond ~0.5–1 m noise is now the limit.
 
-**Changes (committed):** `PING_CYCLES` 10 → 20 (firmware, matched filter, web
+**Changes (commit d0225e7):** `PING_CYCLES` 10 → 20 (firmware, matched filter, web
 page fallback; sampling now starts 1.50 ms / 26 cm after the burst).
 `BRAKE <µs>` (0–950, RESET → 100). `receive.py`'s port probe sends STOP first:
 the firmware pings from boot and the probe missed START's reply in the stream.
 
-**Open items:**
-- Find the ~25 count noise.
-- The rest of the 46 kHz excitation: try softer switching steps (brake before
-  and after the burst).
-- Target at 2 ft (61 cm) to check range accuracy past the overload with 20 cycles.
+**Later results:**
+- **The ring is several lines, not one:** 44.98, 46.0, 46.8 and 47.82 kHz,
+  Q 300–700, probably one spurious mode per element. It is linear and
+  burst-excited: its phase doesn't move with the brake-release time.
+- **`KICK` (active cancellation):** timed pulses inside the brake. Against one
+  line, four closed-loop iterations took it from |A| 44 to 0.4 (−40 dB) but
+  raised the rest of the band. A fit over the whole waveform
+  (`bench/ring_cancel.py`) reached only −2.9 dB: every width hit the 5 µs cap,
+  and the first runs were scattered by timing jitter. Shelved, but left in as
+  an experimental command.
+- **Timing jitter:** coast and sampling start were timed off `esp_timer` in
+  1 µs steps, which put ~0.3 µs RMS of scatter on each ping (5° at 47 kHz).
+  They are now timed off the burst's CPU cycle counter: 0.10–0.125 µs (from
+  the 47.8 kHz phase across pings). Background subtraction is now good to ~30 dB.
+- **Receive filter:** correlating with the rectangular 20-cycle burst passed
+  47.8 kHz only ~33 dB down, leaving the ring 4–11 dB above the noise at
+  35–100 cm in the echogram. A Blackman-tapered 40 kHz tone over 1.5× the
+  burst (`make_receive_filter`) puts it 25–40 dB below the noise at every
+  range, with +0.4 dB echo SNR, the same ~10 cm peak width and the peak within
+  0.3 cm of the echo's start (1.8 cm before). It is used by every plot script
+  and the web page (flashed).
+- **Near range is still bright:** in `fresh.csv` 40 kHz content is 20–27 dB
+  above the floor at 35–60 cm with both filters. After ideal background
+  subtraction 9–24 dB is left at 35–100 cm, so most of it changes from ping to
+  ping. It drifts smoothly, which looks like a person moving near the bench.
+  Beyond 1.2 m the per-ping noise in the 40 kHz band is ~2 counts.
+
+**Changes (this commit):** `KICK <delay_ns> <width_ns> <+|->` / `KICK CLEAR`
+(RESET clears; `/config` lists them). Coast and sampling start timed off the
+cycle counter. `make_receive_filter()` in `plot_matched_filter.py` replaces the
+burst template in the matched filter (plots, live echogram, web page);
+`make_ping_template()` remains the burst. `bench/ring_cancel.py`.
+
+**Open items (start here on 10-28):**
+- Two ~30 s captures at defaults: (1) nobody within ~2 m of the array;
+  (2) foam or cloth over the array face. If 35–100 cm stays bright with foam,
+  it is electrical or inside the transducers; if it goes dark, it is acoustic
+  (bench and mount echoes, or reverberation).
+- If the near range turns out static: live background (clutter) subtraction in
+  the echogram, now that jitter allows ~30 dB of cancellation.
+- Find the ~25 count noise (raw, per ping; after the receive filter only ~2
+  counts remain in band beyond 1.2 m, so this may matter less).
+- Target at 2 ft (61 cm) to check range accuracy past the overload with 20
+  cycles and the new filter.
+- Update `plot_echogram.py`'s note that the matched-filter band peaks ~20 cm
+  beyond the leading edge, after the target test.
 
 ## 2026-10-26 (starfish, host) — shared TX/RX: the transmit array as the receiver
 
