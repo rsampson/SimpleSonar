@@ -58,13 +58,32 @@ defaults (RESET). **Capture:** `bench/profiles/dummy-2026-10-29/raw/dummy.csv`
   - Echo cost can't be read from this pair: the scene changed (target added,
     per-ping floor 48 vs 30 counts). Expected cost for a capacitive source of
     1/(ωC₀) ≈ 318 Ω: |R ∥ C₀| 268 → 218 Ω, about −1.8 dB.
+- **300 vs 500 Ω, same scene** (`ab_r300.csv`, then `ab_r500.csv`; target in
+  place, nobody near). The first `ab_r500` attempt had the power off for 96 of
+  100 pings and was recaptured.
+  - Echo cost of 300 Ω: target 8729 vs 10757 counts = **−1.8 dB**, exactly the
+    predicted |R ∥ C₀| ratio; room echoes at 234 / 299 cm −0.9 / −1.1 dB.
+  - The 45–48 kHz ring is 1–5 dB lower with 300 Ω; the near-range clutter
+    still ends at ~65 cm with either (3× floor: 65.1 vs 64.3 cm). Resistive
+    loading has done what it can.
+  - Repeatability: two 300 Ω captures minutes apart gave target 8726 / 8729.
+- **The ring is deterministic, so subtract it.** Mean of pings 1–50 subtracted
+  from pings 51–100 (matched-filter envelope, median per ping, dB over the
+  floor):
+  - 300 Ω: 28 cm 39 → 8, 32 cm 31 → 1, 36 cm 32 → −2, 40 cm 28 → −6,
+    50 cm 12 → −11 dB. Clear of the floor from ~33 cm instead of ~65 cm.
+  - 500 Ω: 28 cm 42 → 22, 40 cm 25 → 11, 45 cm 25 → −7 dB. Worse, but this
+    capture started right after power-on, so drift while warming up may be the
+    cause, not the resistor.
 - `receive.py`'s port probe failed once with the firmware pinging normally;
   opening `/dev/ttyUSB0` explicitly worked. Not investigated.
 
 **Open items:**
-- Damping (the near range is ring, so this is the lever): try a fixed 270–330 Ω (optimum ≈ 280 Ω) and measure ring vs echo
-  loss; if the echo loss hurts, a MOSFET-switched ~280 Ω load during the first
-  few hundred µs after the burst only.
+- Live ring subtraction in the echogram (`plot_echogram_live.py`, web page):
+  subtract a slowly updated mean of recent pings before the matched filter.
+  Check its drift over minutes and after power-on, and how fast a static
+  target fades.
+- Decide 300 vs 500 Ω (300 is fitted now: −1.8 dB echo, a few dB less ring).
 - The intermittent probe failure in `receive.py`.
 - Target at 2 ft (61 cm), as before.
 
