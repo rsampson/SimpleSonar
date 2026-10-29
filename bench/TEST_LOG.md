@@ -9,7 +9,7 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
-## 2026-10-29 (crab, laptop) — dummy transducer: the amplifier is clean, the ring is the array's
+## 2026-10-29 (crab, laptop) — dummy transducer and foam: amplifier clean, near range is the array's ring
 
 **Hardware:** as on 10-27, with the array swapped for a dummy: ~12 nF of
 capacitors (10 nF + 2.2 nF) with the 500 Ω across them. **Firmware:** e3257e1,
@@ -35,13 +35,25 @@ defaults (RESET). **Capture:** `bench/profiles/dummy-2026-10-29/raw/dummy.csv`
 - **Array in-band noise is 3–4× the electrical floor:** 0.9–1.2 counts beyond
   1 m vs 0.27 with the dummy, so with the array the floor is acoustic or the
   ring's ping-to-ping variation, not the electronics.
+- **Foam over the face vs open** (array back, 500 Ω, nobody within ~2 m;
+  `bench/profiles/array-2026-10-29/raw/foam.csv` then `open.csv`, 100 pings
+  each, back to back). Matched-filter envelope of the across-ping mean, dB
+  above the per-ping floor beyond 250 cm:
+  - **Up to ~70 cm it is the array's ring, not echoes:** 40 cm is 632 (open)
+    vs 618 (foam) counts; 60 cm 85 vs 175 (the foam's load changes the ring).
+    The 45–48 kHz lines are as strong or stronger with foam.
+  - **80–160 cm:** small static echoes in the open capture only (bench, mount),
+    5–10 dB above the floor; with foam everything beyond 100 cm is at the floor.
+  - **Open, 1.7–3.3 m:** a strong return at 173 cm (41 dB, also varying 32 dB
+    from ping to ping, so probably a person) and room echoes at 262 and 330 cm
+    (~20 dB). The sonar sees the room fine.
+  - The per-ping floor with the face open is ~10 dB above foam (30 vs 9.6):
+    acoustic (room ultrasound or reverberation), not electronics.
 - `receive.py`'s port probe failed once with the firmware pinging normally;
   opening `/dev/ttyUSB0` explicitly worked. Not investigated.
 
 **Open items:**
-- Put the array back. Captures with nobody near (~2 m) and with foam over the
-  face, to split the near-range content into ring and acoustic echoes.
-- Damping: try a fixed 270–330 Ω (optimum ≈ 280 Ω) and measure ring vs echo
+- Damping (the near range is ring, so this is the lever): try a fixed 270–330 Ω (optimum ≈ 280 Ω) and measure ring vs echo
   loss; if the echo loss hurts, a MOSFET-switched ~280 Ω load during the first
   few hundred µs after the burst only.
 - The intermittent probe failure in `receive.py`.
