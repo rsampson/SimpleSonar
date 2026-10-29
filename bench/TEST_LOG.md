@@ -83,7 +83,7 @@ defaults (RESET). **Capture:** `bench/profiles/dummy-2026-10-29/raw/dummy.csv`
   subtract a slowly updated mean of recent pings before the matched filter.
   Check its drift over minutes and after power-on, and how fast a static
   target fades.
-- Decide 300 vs 500 Ω (300 is fitted now: −1.8 dB echo, a few dB less ring).
+- Decide 300 vs 500 Ω (500 is fitted now; 300 costs 1.8 dB of echo for a few dB less ring).
 - The intermittent probe failure in `receive.py`.
 - Target at 2 ft (61 cm), as before.
 
