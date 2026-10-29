@@ -35,6 +35,7 @@ static const char WEB_PAGE[] = R"HTML(<!doctype html>
   <h1>SimpleSonar</h1>
   <button id="start">Start</button>
   <button id="stop">Stop</button>
+  <button id="ring" aria-pressed="true">Ring cancel: on</button>
   <span id="status"><span class="dot" id="dot"></span><span id="statustext">connecting...</span></span>
 </header>
 <div id="view"><canvas id="echo"></canvas></div>
@@ -146,19 +147,48 @@ function rangeAxisCm(pkt) {
 }
 
 // The samples [start, end) an echogram column shows. Blanked: below the
-// burst's own length or MIN_DISPLAY_RANGE_CM, whichever is farther, and the
-// last tpl.length - 1, where the matched filter runs out of samples.
-function displayedSamples(pkt, tpl) {
-  const blankCm = Math.max(tpl.length * pkt.dtUs * US_TO_CM, MIN_DISPLAY_RANGE_CM), r = rangeAxisCm(pkt);
+// burst's own length or minCm, whichever is farther, and the last
+// tpl.length - 1, where the matched filter runs out of samples.
+function displayedSamples(pkt, tpl, minCm = MIN_DISPLAY_RANGE_CM) {
+  const blankCm = Math.max(tpl.length * pkt.dtUs * US_TO_CM, minCm), r = rangeAxisCm(pkt);
   let start = 0;
   while (start < pkt.n && r[start] < blankCm) start++;
   return [start, Math.max(start, pkt.n - tpl.length + 1)];
 }
 
-// One echogram column: envelope, NaN outside displayedSamples().
-function processPing(pkt, tpl) {
-  const env = hilbertEnvelope(matchedFilter(pkt.values, tpl));
-  const [start, end] = displayedSamples(pkt, tpl);
+// ring_cancel_weights(): 1 to maxCm, raised cosine to 0 at maxCm + taperCm.
+function ringCancelWeights(rangeCm, maxCm, taperCm) {
+  const w = new Float64Array(rangeCm.length);
+  for (let i = 0; i < w.length; i++) {
+    const z = Math.min(Math.max((rangeCm[i] - maxCm) / taperCm, 0), 1);
+    w[i] = 0.5 * (1 + Math.cos(Math.PI * z));
+  }
+  return w;
+}
+
+// update_ring_estimate(): running mean, then an exponential average.
+function updateRingEstimate(est, values, count, nPings) {
+  if (est === null) return Float64Array.from(values);
+  const out = new Float64Array(values.length), k = Math.min(count + 1, nPings);
+  for (let i = 0; i < out.length; i++) out[i] = est[i] + (values[i] - est[i]) / k;
+  return out;
+}
+
+// cancel_ring(): subtract the zero-mean estimate, weighted.
+function cancelRing(values, est, w) {
+  let mean = 0;
+  for (let i = 0; i < est.length; i++) mean += est[i];
+  mean /= est.length;
+  const out = new Float64Array(values.length);
+  for (let i = 0; i < out.length; i++) out[i] = values[i] - w[i] * (est[i] - mean);
+  return out;
+}
+
+// One echogram column: envelope of `values` (the packet's, or after
+// cancelRing()), NaN outside displayedSamples().
+function processPing(pkt, tpl, values = pkt.values, minCm = MIN_DISPLAY_RANGE_CM) {
+  const env = hilbertEnvelope(matchedFilter(values, tpl));
+  const [start, end] = displayedSamples(pkt, tpl, minCm);
   env.fill(NaN, 0, start);
   env.fill(NaN, end);
   return env;
@@ -177,6 +207,10 @@ const DYNAMIC_RANGE_DB = 40;
 const REFERENCE_DECAY_DB_PER_PING = 1.0;
 const ROWS = 512;                       // range bins shown (max-pooled from the samples)
 const CM_PER_FOOT = 30.48;
+const RING_CANCEL_PINGS = 16;           // plot_echogram_live.py, as are these
+const RING_CANCEL_MAX_CM = 90;
+const RING_CANCEL_TAPER_CM = 20;
+const MIN_DISPLAY_RANGE_RING_CANCEL_CM = 30;
 
 const VIRIDIS = [[68, 1, 84], [71, 44, 122], [59, 81, 139], [44, 113, 142], [33, 144, 141],
                  [39, 173, 129], [92, 200, 99], [170, 220, 50], [253, 231, 37]];
@@ -191,6 +225,9 @@ const state = {
   tpl: null, tplKey: '',
   columns: new Float32Array(WINDOW_PINGS * ROWS).fill(NaN), next: 0, filled: 0,
   ref: 0, rangeCm: null, shown: null, lastId: null, received: 0, missed: 0, times: [],
+  // The estimate is kept up to date while cancellation is off, so turning it
+  // on works at once.
+  ringCancel: true, ringEst: null, ringCount: 0,
 };
 
 const canvas = document.getElementById('echo');
@@ -218,9 +255,16 @@ function addPing(pkt) {
     state.tpl = makeTemplate(pkt.dtUs, state.config.freq_hz, state.config.cycles);
     state.tplKey = key;
   }
-  const env = processPing(pkt, state.tpl);
   state.rangeCm = rangeAxisCm(pkt);
-  state.shown = displayedSamples(pkt, state.tpl);
+  if (state.ringEst !== null && state.ringEst.length !== pkt.n) { state.ringEst = null; state.ringCount = 0; }
+  let values = pkt.values;
+  if (state.ringCancel && state.ringEst !== null) {
+    values = cancelRing(pkt.values, state.ringEst, ringCancelWeights(state.rangeCm, RING_CANCEL_MAX_CM, RING_CANCEL_TAPER_CM));
+  }
+  state.ringEst = updateRingEstimate(state.ringEst, pkt.values, state.ringCount++, RING_CANCEL_PINGS);
+  const minCm = state.ringCancel ? MIN_DISPLAY_RANGE_RING_CANCEL_CM : MIN_DISPLAY_RANGE_CM;
+  const env = processPing(pkt, state.tpl, values, minCm);
+  state.shown = displayedSamples(pkt, state.tpl, minCm);
   let peak = 0;
   const col = state.next * ROWS, per = pkt.n / ROWS;
   for (let row = 0; row < ROWS; row++) {
@@ -326,6 +370,11 @@ function send(cmd) {
 }
 document.getElementById('start').onclick = () => send('START');
 document.getElementById('stop').onclick = () => send('STOP');
+document.getElementById('ring').onclick = (ev) => {
+  state.ringCancel = !state.ringCancel;
+  ev.target.textContent = 'Ring cancel: ' + (state.ringCancel ? 'on' : 'off');
+  ev.target.setAttribute('aria-pressed', String(state.ringCancel));
+};
 window.addEventListener('resize', draw);
 draw();
 connect();

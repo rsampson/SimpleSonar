@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 
 from plot_echogram import MIN_DISPLAY_RANGE_CM, hilbert_envelope
-from plot_echogram_live import update_reference
+from plot_echogram_live import (MIN_DISPLAY_RANGE_RING_CANCEL_CM, cancel_ring, ring_cancel_weights,
+                                update_reference, update_ring_estimate)
 from plot_matched_filter import US_TO_CM, make_receive_filter, matched_filter
 from plot_sensor_stream import range_axis_cm
 from web_preview import load_page, packet_bytes
@@ -31,7 +32,19 @@ console.log(JSON.stringify({
   mf: fix(matchedFilter(pkt.values, tpl)),
   col: fix(processPing(pkt, tpl)),
   ref: [updateReference(100, 2500, 1), updateReference(1000, 10, 1)],
+  ...ring(pkt, tpl),
 }));
+
+// Ring cancellation over three pings: the packet's samples shifted by 0, 7
+// and -3 counts.
+function ring(pkt, tpl) {
+  const w = ringCancelWeights(rangeAxisCm(pkt), 90, 20);
+  let est = null;
+  for (let k = 0; k < 3; k++) est = updateRingEstimate(est, pkt.values.map((v) => v + [0, 7, -3][k]), k, 2);
+  const cleaned = cancelRing(pkt.values, est, w);
+  return { ringW: Array.from(w), ringEst: Array.from(est), ringCleaned: Array.from(cleaned),
+           ringCol: fix(processPing(pkt, tpl, cleaned, 30)) };
+}
 """
 
 
@@ -87,3 +100,25 @@ def test_page_reference_matches_python(ping):
     meta, values = ping
     js = run_page_dsp(meta, values, 40000, 10)
     assert js['ref'] == pytest.approx([update_reference(100, 2500, 1), update_reference(1000, 10, 1)])
+
+
+def test_page_ring_cancel_matches_python(ping):
+    meta, values = ping
+    js = run_page_dsp(meta, values, 40000, 20)
+    w = ring_cancel_weights(range_axis_cm(meta, len(values)), 90, 20)
+    np.testing.assert_allclose(js['ringW'], w, atol=1e-12)
+    est = None
+    for k, shift in enumerate([0, 7, -3]):
+        est = update_ring_estimate(est, np.array(values) + shift, k, 2)
+    np.testing.assert_allclose(js['ringEst'], est, atol=1e-9)
+    cleaned = cancel_ring(values, est, w)
+    np.testing.assert_allclose(js['ringCleaned'], cleaned, atol=1e-9)
+
+    tpl = make_receive_filter(meta['SampleDt_us'], cycles=20)
+    env = hilbert_envelope(matched_filter(cleaned, tpl))
+    blank = range_axis_cm(meta, len(values)) < max(len(tpl) * meta['SampleDt_us'] * US_TO_CM,
+                                                   MIN_DISPLAY_RANGE_RING_CANCEL_CM)
+    blank[len(values) - len(tpl) + 1:] = True
+    col = np.array([np.nan if v is None else v for v in js['ringCol']])
+    assert np.array_equal(np.isnan(col), blank)
+    np.testing.assert_allclose(col[~blank], env[~blank], rtol=1e-6, atol=1e-6)

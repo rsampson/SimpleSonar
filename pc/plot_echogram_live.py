@@ -1,3 +1,4 @@
+import argparse
 import csv
 import os
 import numpy as np
@@ -34,12 +35,28 @@ REFERENCE_DECAY_DB_PER_PING = 1.0
 
 CM_PER_FOOT = 30.48
 
+# Ring cancellation. The shared transducer rings after every burst and fills
+# the near range (to ~65 cm) with returns that are the same on every ping
+# (timing scatter ~0.1 us). Each ping has a running mean of recent pings
+# subtracted before the matched filter, over the near range only: full weight
+# to RING_CANCEL_MAX_CM, a raised-cosine fade to zero over the next
+# RING_CANCEL_TAPER_CM, so static targets beyond it stay visible. Anything
+# that doesn't move inside it fades within ~RING_CANCEL_PINGS pings (~5 s).
+# On 2026-10-29 captures this cleared the near range from ~30 cm instead of
+# ~65 cm; 16 pings kept up with the drift after power-on, where 32-64 left a
+# residue at 28-32 cm (bench/TEST_LOG.md).
+RING_CANCEL_PINGS = 16
+RING_CANCEL_MAX_CM = 90
+RING_CANCEL_TAPER_CM = 20
+MIN_DISPLAY_RANGE_RING_CANCEL_CM = 30
 
-def new_live_state():
+
+def new_live_state(ring_cancel=True):
     state = {
         'offset': 0,
         'header_seen': False,
         'just_reset': False,
+        'ring_cancel': ring_cancel,
     }
     reset_echogram_state(state)
     return state
@@ -58,12 +75,40 @@ def reset_echogram_state(state):
         'ping_ids': [],
         'total_pings_seen': 0,
         'reference': 0.0,
+        'ring_weights': None,
+        'ring_estimate': None,
+        'ring_count': 0,
     })
 
 
 def update_reference(reference, ping_peak, decay_db=REFERENCE_DECAY_DB_PER_PING):
     """Fast-attack, slow-release display reference (see REFERENCE_DECAY_DB_PER_PING)."""
     return max(ping_peak, reference * 10 ** (-decay_db / 20))
+
+
+def ring_cancel_weights(range_cm, max_cm=RING_CANCEL_MAX_CM, taper_cm=RING_CANCEL_TAPER_CM):
+    """Weight of the ring estimate at each range: 1 to max_cm, a raised
+    cosine down to 0 at max_cm + taper_cm, 0 beyond."""
+    z = np.clip((np.asarray(range_cm, dtype=np.float64) - max_cm) / taper_cm, 0.0, 1.0)
+    return 0.5 * (1 + np.cos(np.pi * z))
+
+
+def update_ring_estimate(estimate, values, count, n_pings=RING_CANCEL_PINGS):
+    """Fold ping number `count` (0-based) into the running ring estimate:
+    the plain mean of the pings so far until there are n_pings of them, then
+    an exponential average with that time constant."""
+    values = np.asarray(values, dtype=np.float64)
+    if estimate is None:
+        return values.copy()
+    return estimate + (values - estimate) / min(count + 1, n_pings)
+
+
+def cancel_ring(values, estimate, weights):
+    """Subtract the ring estimate where `weights` says. Its mean is taken
+    out first, so the fade doesn't put a step of the ADC's DC level into the
+    data."""
+    values = np.asarray(values, dtype=np.float64)
+    return values - weights * (estimate - estimate.mean())
 
 
 def tail_new_packets(path, state):
@@ -131,9 +176,19 @@ def process_new_packets(new_packets, live_state):
             live_state['range_cm'] = range_axis_cm(meta, n_samples)
             template = make_receive_filter(sample_dt_us)
             live_state['template'] = template
-            blank_cm = max(len(template) * sample_dt_us * US_TO_CM, MIN_DISPLAY_RANGE_CM)
+            min_cm = MIN_DISPLAY_RANGE_RING_CANCEL_CM if live_state['ring_cancel'] else MIN_DISPLAY_RANGE_CM
+            blank_cm = max(len(template) * sample_dt_us * US_TO_CM, min_cm)
+            live_state['ring_weights'] = ring_cancel_weights(live_state['range_cm'])
             live_state['blank_cm'] = blank_cm
             live_state['blank_samples'] = int(np.count_nonzero(live_state['range_cm'] < blank_cm))
+
+        if live_state['ring_cancel']:
+            raw = values
+            if live_state['ring_estimate'] is not None:
+                values = cancel_ring(raw, live_state['ring_estimate'], live_state['ring_weights'])
+            live_state['ring_estimate'] = update_ring_estimate(
+                live_state['ring_estimate'], raw, live_state['ring_count'])
+            live_state['ring_count'] += 1
 
         mf = matched_filter(values, live_state['template'])
         env = hilbert_envelope(mf)
@@ -200,15 +255,20 @@ def redraw(fig, ax, mesh, live_state):
     mesh.set_array(db.ravel())
 
     latest_id = live_state['ping_ids'][-1] if live_state['ping_ids'] else '-'
+    ring = (f"ring cancel to {RING_CANCEL_MAX_CM} cm" if live_state['ring_cancel'] else "ring cancel off")
     title = (f"Live echogram — {live_state['total_pings_seen']} pings so far, "
-             f"latest ping_id={latest_id}, {DYNAMIC_RANGE_DB} dB dynamic range")
+             f"latest ping_id={latest_id}, {DYNAMIC_RANGE_DB} dB dynamic range, {ring}")
     ax.set_title(title)
     fig.canvas.draw_idle()
 
 
 def main():
+    ap = argparse.ArgumentParser(description="Live echogram of sensor_stream.csv, run alongside receive.py.")
+    ap.add_argument('--no-ring-cancel', action='store_true',
+                    help="show the raw near range (don't subtract the running mean of recent pings)")
+    args = ap.parse_args()
     print(f"Waiting for {INPUT_FILE}... (start receive.py in another terminal)")
-    live_state = new_live_state()
+    live_state = new_live_state(ring_cancel=not args.no_ring_cancel)
     fig = ax = mesh = None
     printed_first = False
 

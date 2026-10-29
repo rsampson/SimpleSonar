@@ -75,14 +75,20 @@ defaults (RESET). **Capture:** `bench/profiles/dummy-2026-10-29/raw/dummy.csv`
   - 500 Ω: 28 cm 42 → 22, 40 cm 25 → 11, 45 cm 25 → −7 dB. Worse, but this
     capture started right after power-on, so drift while warming up may be the
     cause, not the resistor.
+- **Live ring cancellation built** (`plot_echogram_live.py` and the web page,
+  flashed): a running mean of the last ~16 pings subtracted over the near
+  range only (full to 90 cm, faded out by 110 cm); display starts at 30 cm.
+  Parameters from replaying the captures: 16 pings kept up with the drift
+  after power-on, where 32–64 left 4–6 dB at 28 cm. Replayed through the live
+  code (dB over the 250–300 cm level, off → on): `ab_r300` 41 cm 11 → −23,
+  50 cm −4 → −29; `ab_r500` 41 cm 6 → −18, 45 cm 9 → −27; 31 cm (blanked
+  before) −18 / −9. The 160 cm target is unchanged to 0.1 dB.
 - `receive.py`'s port probe failed once with the firmware pinging normally;
   opening `/dev/ttyUSB0` explicitly worked. Not investigated.
 
 **Open items:**
-- Live ring subtraction in the echogram (`plot_echogram_live.py`, web page):
-  subtract a slowly updated mean of recent pings before the matched filter.
-  Check its drift over minutes and after power-on, and how fast a static
-  target fades.
+- Try ring cancellation live on the tablet: a hand moving at 30–60 cm should
+  show; check for residue over minutes and after power-on.
 - Decide 300 vs 500 Ω (500 is fitted now; 300 costs 1.8 dB of echo for a few dB less ring).
 - The intermittent probe failure in `receive.py`.
 - Target at 2 ft (61 cm), as before.

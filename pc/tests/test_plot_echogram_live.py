@@ -1,6 +1,9 @@
+import numpy as np
 import pytest
 
-from plot_echogram_live import new_live_state, tail_new_packets, update_reference
+from plot_echogram_live import (new_live_state, process_new_packets, ring_cancel_weights, tail_new_packets,
+                                update_reference, update_ring_estimate)
+from plot_sensor_stream import range_axis_cm
 
 HEADER = "Timestamp,PingID,T_ping_us,T_sample_us,NumSamples,SampleDt_us,Int_0,Int_1\r\n"
 
@@ -125,3 +128,68 @@ def test_reference_recovers_from_a_28_db_transient_in_about_28_pings():
         ref = update_reference(ref, typical, decay_db=1.0)
         pings += 1
     assert 27 <= pings <= 29
+
+
+def test_ring_estimate_is_the_plain_mean_then_an_exponential_average():
+    est = None
+    for k, v in enumerate([10.0, 20.0, 30.0]):
+        est = update_ring_estimate(est, np.full(3, v), k, n_pings=4)
+    np.testing.assert_allclose(est, 20.0)          # mean of the first three
+    est = update_ring_estimate(est, np.full(3, 60.0), 3, n_pings=4)
+    np.testing.assert_allclose(est, 30.0)          # mean of four
+    est = update_ring_estimate(est, np.full(3, 70.0), 4, n_pings=4)
+    np.testing.assert_allclose(est, 30.0 + 40.0 / 4)  # then 1/4 per ping
+
+
+def test_ring_cancel_weights_fade_out_beyond_the_near_range():
+    w = ring_cancel_weights([0, 90, 100, 110, 200], max_cm=90, taper_cm=20)
+    np.testing.assert_allclose(w, [1, 1, 0.5, 0, 0], atol=1e-12)
+
+
+def synthetic_pings(n_pings, mover_at_last_cm=None, seed=0):
+    """Pings at the real timing: a static 40 kHz ring decaying over the near
+    range, a static target at 150 cm, noise, and optionally something new at
+    mover_at_last_cm in the last ping."""
+    rng = np.random.default_rng(seed)
+    meta = {'Timestamp': '', 'PingID': 0, 'T_ping_us': 0, 'T_sample_us': 1500,
+            'NumSamples': 4096, 'SampleDt_us': 5}
+    r = range_axis_cm(meta, 4096)
+    t = np.arange(4096) * 5e-6
+
+    def burst(cm, amp):
+        return amp * np.exp(-((r - cm) / 6) ** 2) * np.sin(2 * np.pi * 40e3 * t + cm)
+
+    ring = 2000 * np.exp(-(r - 26) / 8) * np.sin(2 * np.pi * 40e3 * t + 1)
+    packets = []
+    for k in range(n_pings):
+        v = 1750 + ring + burst(150, 300) + rng.normal(0, 3, 4096)
+        if mover_at_last_cm is not None and k == n_pings - 1:
+            v = v + burst(mover_at_last_cm, 300)
+        packets.append((dict(meta, PingID=k, T_ping_us=k * 300_000, T_sample_us=k * 300_000 + 1500), v))
+    return packets, r
+
+
+def last_column(packets, ring_cancel):
+    state = new_live_state(ring_cancel=ring_cancel)
+    process_new_packets(packets, state)
+    return state['columns'][-1]
+
+
+def peak_db(env, r, lo, hi):
+    return 20 * np.log10(np.nanmax(env[(r >= lo) & (r < hi)]))
+
+
+def test_ring_cancel_clears_the_near_range_and_keeps_far_and_new_targets():
+    packets, r = synthetic_pings(20, mover_at_last_cm=55)
+    off, on = last_column(packets, False), last_column(packets, True)
+    clean, _ = synthetic_pings(20)
+    on_without_mover = last_column(clean, True)
+
+    # The static ring is gone from the near range...
+    assert peak_db(on_without_mover, r, 40, 45) < peak_db(off, r, 40, 45) - 30
+    # ...the far static target is untouched...
+    assert abs(peak_db(on, r, 140, 160) - peak_db(off, r, 140, 160)) < 0.1
+    # ...and something new in the near range shows up at full strength.
+    assert peak_db(on, r, 50, 60) > peak_db(on_without_mover, r, 50, 60) + 20
+    # With cancellation the display starts at 30 cm instead of 40.
+    assert np.isnan(off[r < 40]).all() and not np.isnan(on[(r >= 31) & (r < 40)]).any()
