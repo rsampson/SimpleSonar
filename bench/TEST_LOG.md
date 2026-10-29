@@ -49,6 +49,15 @@ defaults (RESET). **Capture:** `bench/profiles/dummy-2026-10-29/raw/dummy.csv`
     (~20 dB). The sonar sees the room fine.
   - The per-ping floor with the face open is ~10 dB above foam (30 vs 9.6):
     acoustic (room ultrasound or reverberation), not electronics.
+- **300 Ω instead of 500 Ω** (`r300.csv`, target placed at 62 in = 157.5 cm):
+  - The target's echo peaks at 160.1 cm (+2.6 cm with the tapered receive
+    filter), 45 dB above the per-ping floor.
+  - The 45–48 kHz ring is 3–8 dB lower at 27–55 cm and unchanged beyond. The
+    near-range clutter still ends at ~60–70 cm (3× floor: 60 cm at 500 Ω,
+    68 cm at 300 Ω). The 40 kHz content at 27–33 cm went up, not down.
+  - Echo cost can't be read from this pair: the scene changed (target added,
+    per-ping floor 48 vs 30 counts). Expected cost for a capacitive source of
+    1/(ωC₀) ≈ 318 Ω: |R ∥ C₀| 268 → 218 Ω, about −1.8 dB.
 - `receive.py`'s port probe failed once with the firmware pinging normally;
   opening `/dev/ttyUSB0` explicitly worked. Not investigated.
 
