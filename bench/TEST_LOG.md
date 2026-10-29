@@ -9,6 +9,44 @@ Durable findings also go in `bench/NOTES.md`; raw captures stay on the laptop
 
 ---
 
+## 2026-10-29 (crab, laptop) — dummy transducer: the amplifier is clean, the ring is the array's
+
+**Hardware:** as on 10-27, with the array swapped for a dummy: ~12 nF of
+capacitors (10 nF + 2.2 nF) with the 500 Ω across them. **Firmware:** e3257e1,
+defaults (RESET). **Capture:** `bench/profiles/dummy-2026-10-29/raw/dummy.csv`
+(100 pings, ids continuous, no clipping), compared with the 10-27 array capture
+`bench/profiles/ring-2026-10-27/raw/fresh.csv`.
+
+**Results:**
+- **Not the amplifier.** On the scope, the input (array terminals) rang for
+  ~400 µs and the preamp output for ~1200 µs. An exponential decay amplified by
+  G stays above a fixed threshold τ·ln G longer: with τ ≈ 180 µs (fitted to the
+  40 kHz envelope in `fresh.csv`) and G ≈ 100 that is +830 µs, i.e. ~1230 µs.
+  With the dummy in place the output doesn't ring at all.
+- **No electrical 40 kHz content.** With the dummy, the ping-locked 40 kHz band
+  is 1.0 counts at 26–40 cm and ≤0.1 beyond (array: 150 / 21 / 8 counts at
+  26–40 / 40–60 / 60–100 cm). So the bright near range is all from the array:
+  its ring, or acoustic echoes. Drive crosstalk is negligible.
+- **The raw noise is out of band.** Per-ping noise with the dummy is 10.7 counts
+  RMS, but 94% of its power is below 1 kHz (hum/drift) and 3.7% is a ~10 kHz
+  line; only 0.27 counts is in the 40 kHz band. The matched filter removes the
+  rest. The ping-locked part (13 counts) is a slow ~46-count ramp over the
+  window plus a 10 kHz line, also out of band.
+- **Array in-band noise is 3–4× the electrical floor:** 0.9–1.2 counts beyond
+  1 m vs 0.27 with the dummy, so with the array the floor is acoustic or the
+  ring's ping-to-ping variation, not the electronics.
+- `receive.py`'s port probe failed once with the firmware pinging normally;
+  opening `/dev/ttyUSB0` explicitly worked. Not investigated.
+
+**Open items:**
+- Put the array back. Captures with nobody near (~2 m) and with foam over the
+  face, to split the near-range content into ring and acoustic echoes.
+- Damping: try a fixed 270–330 Ω (optimum ≈ 280 Ω) and measure ring vs echo
+  loss; if the echo loss hurts, a MOSFET-switched ~280 Ω load during the first
+  few hundred µs after the burst only.
+- The intermittent probe failure in `receive.py`.
+- Target at 2 ft (61 cm), as before.
+
 ## 2026-10-27 (crab, laptop) — array ring-down: 500 Ω load, BRAKE, 20-cycle burst, ring-rejecting receive filter
 
 **Hardware:** as on 10-26 (10-element array as TX and RX, LF356 preamp on
