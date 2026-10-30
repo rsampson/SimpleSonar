@@ -166,12 +166,13 @@ function ringCancelWeights(rangeCm, maxCm, taperCm) {
   return w;
 }
 
-// update_ring_estimate(): running mean, then an exponential average.
+// update_ring_estimate(): running mean, then an exponential average. Updates
+// `est` in place (and returns it); the first call makes the array.
 function updateRingEstimate(est, values, count, nPings) {
   if (est === null) return Float64Array.from(values);
-  const out = new Float64Array(values.length), k = Math.min(count + 1, nPings);
-  for (let i = 0; i < out.length; i++) out[i] = est[i] + (values[i] - est[i]) / k;
-  return out;
+  const k = Math.min(count + 1, nPings);
+  for (let i = 0; i < est.length; i++) est[i] += (values[i] - est[i]) / k;
+  return est;
 }
 
 // ring_residual_rms(): weighted RMS of (ping - estimate), DC removed.
