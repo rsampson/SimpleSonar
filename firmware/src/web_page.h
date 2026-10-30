@@ -234,12 +234,14 @@ const RING_RESET_GAP_US = 2000000;      // a longer gap between pings restarts t
 const RING_GATE_FACTOR = 3.0;           // see plot_echogram_live.py
 const RING_GATE_MAX_SKIPS = 40;
 
-const VIRIDIS = [[68, 1, 84], [71, 44, 122], [59, 81, 139], [44, 113, 142], [33, 144, 141],
-                 [39, 173, 129], [92, 200, 99], [170, 220, 50], [253, 231, 37]];
+// Weakest to strongest: violet, blue, cyan, green, yellow, orange, red (after
+// matplotlib's 'turbo', which the PC plots use).
+const PALETTE = [[48, 18, 59], [70, 98, 215], [54, 170, 249], [26, 228, 182], [114, 254, 94],
+                 [199, 239, 52], [250, 186, 57], [246, 107, 25], [200, 30, 2]];
 const LUT = new Uint8ClampedArray(256 * 3);
 for (let i = 0; i < 256; i++) {
-  const p = i / 255 * (VIRIDIS.length - 1), k = Math.min(Math.floor(p), VIRIDIS.length - 2), f = p - k;
-  for (let c = 0; c < 3; c++) LUT[i * 3 + c] = VIRIDIS[k][c] + f * (VIRIDIS[k + 1][c] - VIRIDIS[k][c]);
+  const p = i / 255 * (PALETTE.length - 1), k = Math.min(Math.floor(p), PALETTE.length - 2), f = p - k;
+  for (let c = 0; c < 3; c++) LUT[i * 3 + c] = PALETTE[k][c] + f * (PALETTE[k + 1][c] - PALETTE[k][c]);
 }
 
 const state = {

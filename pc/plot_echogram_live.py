@@ -287,7 +287,7 @@ def init_plot(live_state):
     mesh = ax.pcolormesh(
         x, y, initial,
         shading='flat',
-        cmap='viridis',
+        cmap='turbo',
         vmin=-DYNAMIC_RANGE_DB, vmax=0,
     )
     ax.invert_yaxis()

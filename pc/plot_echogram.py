@@ -133,7 +133,7 @@ def main():
     mesh = ax.pcolormesh(
         t_rel, range_cm, db,
         shading='nearest',
-        cmap='viridis',
+        cmap='turbo',
         vmin=-DYNAMIC_RANGE_DB, vmax=0,
     )
     ax.invert_yaxis()  # fish-finder convention: shallow/near range at top
