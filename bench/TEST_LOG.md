@@ -75,6 +75,16 @@ defaults (RESET). **Capture:** `bench/profiles/dummy-2026-10-29/raw/dummy.csv`
   - 500 Ω: 28 cm 42 → 22, 40 cm 25 → 11, 45 cm 25 → −7 dB. Worse, but this
     capture started right after power-on, so drift while warming up may be the
     cause, not the resistor.
+- **Ring-cancel ghost fixed** (code review finding): a hand held near the
+  array was averaged into the ring estimate and left an inverted echo when it
+  moved away (injected 300-count echo at 55 cm: +24 dB over the far floor for
+  ~10 pings, still +7 dB after 40). Pings whose near-range residual is over 3×
+  the usual are now kept out of the estimate (a gate; after 40 in a row the
+  new level is accepted). Ghost: −22 dB (gone). On the 10-29 captures the gate
+  rejected 0–1 of 99 pings and left the cancellation unchanged. Also fixed:
+  uncancelled first ping, estimate restart after a >2 s pause / config change
+  / reconnect, cached weights on the page. Not done: toggle redrawing the
+  whole window (mixed blanking for a minute after pressing it).
 - **Live ring cancellation built** (`plot_echogram_live.py` and the web page,
   flashed): a running mean of the last ~16 pings subtracted over the near
   range only (full to 90 cm, faded out by 110 cm); display starts at 30 cm.

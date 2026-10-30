@@ -174,6 +174,24 @@ function updateRingEstimate(est, values, count, nPings) {
   return out;
 }
 
+// ring_residual_rms(): weighted RMS of (ping - estimate), DC removed.
+function ringResidualRms(values, est, w) {
+  const n = est.length, d = new Float64Array(n);
+  let mean = 0, num = 0, den = 0;
+  for (let i = 0; i < n; i++) { d[i] = values[i] - est[i]; mean += d[i]; }
+  mean /= n;
+  for (let i = 0; i < n; i++) { const x = d[i] - mean; num += w[i] * x * x; den += w[i]; }
+  return Math.sqrt(num / den);
+}
+
+// ring_gate(): [accept, typical, skips] for a ping with residual `stat`.
+function ringGate(stat, typical, skips, nPings, factor, maxSkips) {
+  if (typical === null) return [true, stat, 0];
+  if (stat <= factor * typical) return [true, typical + (stat - typical) / nPings, 0];
+  if (skips >= maxSkips) return [true, stat, 0];
+  return [false, typical, skips + 1];
+}
+
 // cancel_ring(): subtract the zero-mean estimate, weighted.
 function cancelRing(values, est, w) {
   let mean = 0;
@@ -212,6 +230,8 @@ const RING_CANCEL_MAX_CM = 90;
 const RING_CANCEL_TAPER_CM = 20;
 const MIN_DISPLAY_RANGE_RING_CANCEL_CM = 30;
 const RING_RESET_GAP_US = 2000000;      // a longer gap between pings restarts the estimate
+const RING_GATE_FACTOR = 3.0;           // see plot_echogram_live.py
+const RING_GATE_MAX_SKIPS = 40;
 
 const VIRIDIS = [[68, 1, 84], [71, 44, 122], [59, 81, 139], [44, 113, 142], [33, 144, 141],
                  [39, 173, 129], [92, 200, 99], [170, 220, 50], [253, 231, 37]];
@@ -228,7 +248,7 @@ const state = {
   ref: 0, rangeCm: null, shown: null, lastId: null, received: 0, missed: 0, times: [],
   // The estimate is kept up to date while cancellation is off, so turning it
   // on works at once.
-  ringCancel: true, ringEst: null, ringCount: 0, ringW: null, ringWKey: '', lastTPingUs: null,
+  ringCancel: true, ringEst: null, ringCount: 0, ringTypical: null, ringSkips: 0, ringW: null, ringWKey: '', lastTPingUs: null,
 };
 
 const canvas = document.getElementById('echo');
@@ -250,7 +270,7 @@ async function loadConfig() {
   } catch (e) { /* keep the defaults */ }
 }
 
-function resetRing() { state.ringEst = null; state.ringCount = 0; }
+function resetRing() { state.ringEst = null; state.ringCount = 0; state.ringTypical = null; state.ringSkips = 0; }
 
 function addPing(pkt) {
   const key = pkt.dtUs + '/' + state.config.freq_hz + '/' + state.config.cycles;
@@ -273,7 +293,13 @@ function addPing(pkt) {
     values = cancelRing(pkt.values, state.ringEst, state.ringW);
     minCm = MIN_DISPLAY_RANGE_RING_CANCEL_CM;   // with no estimate yet, keep the 40 cm blanking
   }
-  state.ringEst = updateRingEstimate(state.ringEst, pkt.values, state.ringCount++, RING_CANCEL_PINGS);
+  let accept = true;
+  if (state.ringEst !== null) {
+    const stat = ringResidualRms(pkt.values, state.ringEst, state.ringW);
+    [accept, state.ringTypical, state.ringSkips] = ringGate(
+      stat, state.ringTypical, state.ringSkips, RING_CANCEL_PINGS, RING_GATE_FACTOR, RING_GATE_MAX_SKIPS);
+  }
+  if (accept) state.ringEst = updateRingEstimate(state.ringEst, pkt.values, state.ringCount++, RING_CANCEL_PINGS);
   const env = processPing(pkt, state.tpl, values, minCm);
   state.shown = displayedSamples(pkt, state.tpl, minCm);
   let peak = 0;

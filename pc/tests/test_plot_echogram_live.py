@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from plot_echogram_live import (new_live_state, process_new_packets, ring_cancel_weights, tail_new_packets,
+from plot_echogram_live import (RING_GATE_MAX_SKIPS, new_live_state, process_new_packets, ring_cancel_weights,
+                                ring_gate, tail_new_packets,
                                 update_reference, update_ring_estimate)
 from plot_sensor_stream import range_axis_cm
 
@@ -212,3 +213,29 @@ def test_a_pause_restarts_the_ring_estimate():
     assert state['ring_count'] == 4
     process_new_packets(packets[4:], state)
     assert state['ring_count'] == 2
+
+
+def test_gate_rejects_an_intruder_then_gives_up_and_takes_the_new_level():
+    typical, skips = None, 0
+    for s in [10.0, 10.0, 10.0]:
+        accept, typical, skips = ring_gate(s, typical, skips)
+        assert accept
+    for _ in range(RING_GATE_MAX_SKIPS):                 # 5x the usual: rejected
+        accept, typical, skips = ring_gate(50.0, typical, skips)
+        assert not accept
+    accept, typical, skips = ring_gate(50.0, typical, skips)   # too long to be an intruder
+    assert accept and typical == 50.0 and skips == 0
+
+
+def test_a_target_that_comes_and_goes_leaves_no_ghost():
+    packets, r = synthetic_pings(60)
+    t = np.arange(4096) * 5e-6
+    hand = 800 * np.exp(-((r - 55) / 6) ** 2) * np.sin(2 * np.pi * 40e3 * t)
+    for k in range(25, 45):
+        packets[k] = (packets[k][0], packets[k][1] + hand)
+    state = new_live_state(ring_cancel=True)
+    process_new_packets(packets, state)
+    near = (r > 50) & (r < 60)
+    during = np.nanmax(state['columns'][35][near])
+    after = np.nanmax(state['columns'][46][near])        # one ping after it left
+    assert during > 30 * after

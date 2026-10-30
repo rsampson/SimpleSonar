@@ -50,6 +50,15 @@ RING_CANCEL_MAX_CM = 90
 RING_CANCEL_TAPER_CM = 20
 MIN_DISPLAY_RANGE_RING_CANCEL_CM = 30
 RING_RESET_GAP_US = 2_000_000   # a longer gap between pings restarts the estimate
+# A ping whose near range differs from the estimate by more than
+# RING_GATE_FACTOR x the usual amount (something moved in) is not folded into
+# the estimate, or it would leave an inverted ghost when it moves away. After
+# RING_GATE_MAX_SKIPS rejected pings in a row (~12 s) the new level is taken
+# as the ring, so real drift can't lock the estimate. On the 2026-10-29
+# captures the gate rejected 0-1 of 99 pings; with it, a hand echo that had
+# left left no ghost (without: +24 dB over the far floor, fading over ~40 pings).
+RING_GATE_FACTOR = 3.0
+RING_GATE_MAX_SKIPS = 40
 
 
 def new_live_state(ring_cancel=True):
@@ -79,6 +88,8 @@ def reset_echogram_state(state):
         'ring_weights': None,
         'ring_estimate': None,
         'ring_count': 0,
+        'ring_typical': None,
+        'ring_skips': 0,
         'blank_samples_uncancelled': None,
         'last_t_ping_us': None,
     })
@@ -104,6 +115,27 @@ def update_ring_estimate(estimate, values, count, n_pings=RING_CANCEL_PINGS):
     if estimate is None:
         return values.copy()
     return estimate + (values - estimate) / min(count + 1, n_pings)
+
+
+def ring_residual_rms(values, estimate, weights):
+    """Weighted RMS of (ping - estimate) over the cancelled range, with the
+    DC difference taken out."""
+    d = np.asarray(values, dtype=np.float64) - estimate
+    d = d - d.mean()
+    return float(np.sqrt((weights * d * d).sum() / weights.sum()))
+
+
+def ring_gate(stat, typical, skips, n_pings=RING_CANCEL_PINGS, max_skips=RING_GATE_MAX_SKIPS):
+    """Decide whether a ping with residual `stat` goes into the estimate.
+    Returns (accept, typical, skips): `typical` is the running mean residual of
+    accepted pings and `skips` the rejected pings in a row."""
+    if typical is None:
+        return True, stat, 0
+    if stat <= RING_GATE_FACTOR * typical:
+        return True, typical + (stat - typical) / n_pings, 0
+    if skips >= max_skips:
+        return True, stat, 0
+    return False, typical, skips + 1
 
 
 def cancel_ring(values, estimate, weights):
@@ -193,6 +225,8 @@ def process_new_packets(new_packets, live_state):
         if last_t is not None and meta['T_ping_us'] - last_t > RING_RESET_GAP_US:
             live_state['ring_estimate'] = None
             live_state['ring_count'] = 0
+            live_state['ring_typical'] = None
+            live_state['ring_skips'] = 0
         live_state['last_t_ping_us'] = meta['T_ping_us']
 
         raw = values
@@ -204,9 +238,15 @@ def process_new_packets(new_packets, live_state):
                 # Nothing to cancel with yet: don't show the uncancelled ring below 40 cm.
                 blank_samples = live_state['blank_samples_uncancelled']
         # The estimate is updated with cancellation off too, like the web page's.
-        live_state['ring_estimate'] = update_ring_estimate(
-            live_state['ring_estimate'], raw, live_state['ring_count'])
-        live_state['ring_count'] += 1
+        accept = True
+        if live_state['ring_estimate'] is not None:
+            stat = ring_residual_rms(raw, live_state['ring_estimate'], live_state['ring_weights'])
+            accept, live_state['ring_typical'], live_state['ring_skips'] = ring_gate(
+                stat, live_state['ring_typical'], live_state['ring_skips'])
+        if accept:
+            live_state['ring_estimate'] = update_ring_estimate(
+                live_state['ring_estimate'], raw, live_state['ring_count'])
+            live_state['ring_count'] += 1
 
         mf = matched_filter(values, live_state['template'])
         env = hilbert_envelope(mf)
