@@ -83,8 +83,9 @@ defaults (RESET). **Capture:** `bench/profiles/dummy-2026-10-29/raw/dummy.csv`
   new level is accepted). Ghost: −22 dB (gone). On the 10-29 captures the gate
   rejected 0–1 of 99 pings and left the cancellation unchanged. Also fixed:
   uncancelled first ping, estimate restart after a >2 s pause / config change
-  / reconnect, cached weights on the page. Not done: toggle redrawing the
-  whole window (mixed blanking for a minute after pressing it).
+  / reconnect, cached weights on the page. The page keeps both views (raw and
+  cancelled) for the whole window, so the button switches all of it at once
+  (checked by running the page's display code under Node on a capture).
 - **Live ring cancellation built** (`plot_echogram_live.py` and the web page,
   flashed): a running mean of the last ~16 pings subtracted over the near
   range only (full to 90 cm, faded out by 110 cm); display starts at 30 cm.

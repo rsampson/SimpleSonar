@@ -244,10 +244,12 @@ for (let i = 0; i < 256; i++) {
 const state = {
   config: { freq_hz: 40000, cycles: 20 },
   tpl: null, tplKey: '',
-  columns: new Float32Array(WINDOW_PINGS * ROWS).fill(NaN), next: 0, filled: 0,
-  ref: 0, rangeCm: null, shown: null, lastId: null, received: 0, missed: 0, times: [],
-  // The estimate is kept up to date while cancellation is off, so turning it
-  // on works at once.
+  // Both views are kept, [0] without ring cancellation and [1] with, so the
+  // button switches the whole window at once.
+  columns: [new Float32Array(WINDOW_PINGS * ROWS).fill(NaN), new Float32Array(WINDOW_PINGS * ROWS).fill(NaN)],
+  next: 0, filled: 0,
+  ref: [0, 0], rangeCm: null, shown: [null, null], lastId: null, received: 0, missed: 0, times: [],
+  // The estimate is kept up to date whichever view is shown.
   ringCancel: true, ringEst: null, ringCount: 0, ringTypical: null, ringSkips: 0, ringW: null, ringWKey: '', lastTPingUs: null,
 };
 
@@ -288,10 +290,13 @@ function addPing(pkt) {
     state.ringW = ringCancelWeights(state.rangeCm, RING_CANCEL_MAX_CM, RING_CANCEL_TAPER_CM);
     state.ringWKey = wKey;
   }
-  let values = pkt.values, minCm = MIN_DISPLAY_RANGE_CM;
-  if (state.ringCancel && state.ringEst !== null) {
-    values = cancelRing(pkt.values, state.ringEst, state.ringW);
-    minCm = MIN_DISPLAY_RANGE_RING_CANCEL_CM;   // with no estimate yet, keep the 40 cm blanking
+  // View 0: the ping as received. View 1: ring cancelled, once there is an
+  // estimate (until then it is the same as view 0, with the 40 cm blanking).
+  const env0 = processPing(pkt, state.tpl, pkt.values, MIN_DISPLAY_RANGE_CM);
+  let env1 = env0, minCm1 = MIN_DISPLAY_RANGE_CM;
+  if (state.ringEst !== null) {
+    minCm1 = MIN_DISPLAY_RANGE_RING_CANCEL_CM;
+    env1 = processPing(pkt, state.tpl, cancelRing(pkt.values, state.ringEst, state.ringW), minCm1);
   }
   let accept = true;
   if (state.ringEst !== null) {
@@ -300,19 +305,20 @@ function addPing(pkt) {
       stat, state.ringTypical, state.ringSkips, RING_CANCEL_PINGS, RING_GATE_FACTOR, RING_GATE_MAX_SKIPS);
   }
   if (accept) state.ringEst = updateRingEstimate(state.ringEst, pkt.values, state.ringCount++, RING_CANCEL_PINGS);
-  const env = processPing(pkt, state.tpl, values, minCm);
-  state.shown = displayedSamples(pkt, state.tpl, minCm);
-  let peak = 0;
   const col = state.next * ROWS, per = pkt.n / ROWS;
-  for (let row = 0; row < ROWS; row++) {
-    let m = NaN;
-    for (let i = Math.floor(row * per); i < Math.floor((row + 1) * per); i++) {
-      if (!(env[i] <= m)) m = Number.isNaN(env[i]) ? m : env[i];
+  [[env0, MIN_DISPLAY_RANGE_CM], [env1, minCm1]].forEach(([env, minCm], v) => {
+    state.shown[v] = displayedSamples(pkt, state.tpl, minCm);
+    let peak = 0;
+    for (let row = 0; row < ROWS; row++) {
+      let m = NaN;
+      for (let i = Math.floor(row * per); i < Math.floor((row + 1) * per); i++) {
+        if (!(env[i] <= m)) m = Number.isNaN(env[i]) ? m : env[i];
+      }
+      state.columns[v][col + row] = m;
+      if (m > peak) peak = m;
     }
-    state.columns[col + row] = m;
-    if (m > peak) peak = m;
-  }
-  state.ref = updateReference(state.ref, peak, REFERENCE_DECAY_DB_PER_PING);
+    state.ref[v] = updateReference(state.ref[v], peak, REFERENCE_DECAY_DB_PER_PING);
+  });
   state.next = (state.next + 1) % WINDOW_PINGS;
   state.filled = Math.min(state.filled + 1, WINDOW_PINGS);
 
@@ -325,15 +331,17 @@ function addPing(pkt) {
   render();
 }
 
+function view() { return state.ringCancel ? 1 : 0; }
+
 function render() {
-  const ref = state.ref > 0 ? state.ref : 1, d = pixels.data;
+  const v = view(), cols = state.columns[v], ref = state.ref[v] > 0 ? state.ref[v] : 1, d = pixels.data;
   for (let x = 0; x < WINDOW_PINGS; x++) {
     // oldest column on the left, newest on the right
     const c = (state.next + x) % WINDOW_PINGS;
     for (let row = 0; row < ROWS; row++) {
-      const v = state.columns[c * ROWS + row], o = (row * WINDOW_PINGS + x) * 4;
-      if (!(v > 0)) { d[o] = 16; d[o + 1] = 20; d[o + 2] = 24; d[o + 3] = 255; continue; }
-      const db = Math.max(-DYNAMIC_RANGE_DB, Math.min(0, 20 * Math.log10(v / ref)));
+      const val = cols[c * ROWS + row], o = (row * WINDOW_PINGS + x) * 4;
+      if (!(val > 0)) { d[o] = 16; d[o + 1] = 20; d[o + 2] = 24; d[o + 3] = 255; continue; }
+      const db = Math.max(-DYNAMIC_RANGE_DB, Math.min(0, 20 * Math.log10(val / ref)));
       const li = Math.round((db + DYNAMIC_RANGE_DB) / DYNAMIC_RANGE_DB * 255) * 3;
       d[o] = LUT[li]; d[o + 1] = LUT[li + 1]; d[o + 2] = LUT[li + 2]; d[o + 3] = 255;
     }
@@ -353,8 +361,9 @@ function draw() {
   // Only the rows inside displayedSamples(), so the range axis starts where
   // the blanking ends.
   const per = state.rangeCm ? state.rangeCm.length / ROWS : 1;
-  const row0 = state.shown ? Math.ceil(state.shown[0] / per) : 0;
-  const row1 = state.shown ? Math.max(row0 + 1, Math.floor(state.shown[1] / per)) : ROWS;
+  const shown = state.shown[view()];
+  const row0 = shown ? Math.ceil(shown[0] / per) : 0;
+  const row1 = shown ? Math.max(row0 + 1, Math.floor(shown[1] / per)) : ROWS;
   ctx.drawImage(image, 0, row0, WINDOW_PINGS, row1 - row0, left, top, pw, ph);
   ctx.strokeStyle = 'rgba(230,233,236,0.18)'; ctx.lineWidth = dpr;
   ctx.strokeRect(left - 0.5 * dpr, top - 0.5 * dpr, pw + dpr, ph + dpr);  // outline, visible before the window fills
@@ -411,6 +420,7 @@ document.getElementById('ring').onclick = (ev) => {
   state.ringCancel = !state.ringCancel;
   ev.target.textContent = 'Ring cancel: ' + (state.ringCancel ? 'on' : 'off');
   ev.target.setAttribute('aria-pressed', String(state.ringCancel));
+  render();
 };
 window.addEventListener('resize', draw);
 draw();
