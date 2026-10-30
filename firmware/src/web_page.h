@@ -23,6 +23,9 @@ static const char WEB_PAGE[] = R"HTML(<!doctype html>
   h1 { font-size: 16px; margin: 0; font-weight: 600; }
   button { font: inherit; padding: 8px 18px; border-radius: 6px; border: 1px solid #3a434d; background: #262d35; color: var(--text); }
   button:active { background: #323b45; }
+  label.gain { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  label.gain input { width: 150px; accent-color: #f66b19; }
+  #gaintext { display: inline-block; min-width: 4.5em; font-variant-numeric: tabular-nums; color: var(--text); cursor: pointer; }
   #status { color: var(--muted); font-variant-numeric: tabular-nums; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: var(--bad); }
   .dot.ok { background: var(--ok); } .dot.wait { background: var(--warn); }
@@ -36,6 +39,8 @@ static const char WEB_PAGE[] = R"HTML(<!doctype html>
   <button id="start">Start</button>
   <button id="stop">Stop</button>
   <button id="ring" aria-pressed="true">Ring cancel: on</button>
+  <label class="gain">Intensity <input type="range" id="gain" min="-30" max="30" step="1" value="0" aria-label="Display intensity in dB">
+    <span id="gaintext" title="Click to reset">0 dB</span></label>
   <span id="status"><span class="dot" id="dot"></span><span id="statustext">connecting...</span></span>
 </header>
 <div id="view"><canvas id="echo"></canvas></div>
@@ -245,6 +250,7 @@ for (let i = 0; i < 256; i++) {
 }
 
 const state = {
+  gainDb: 0,                              // display intensity: shifts the 40 dB window; 0 = strongest return is red
   config: { freq_hz: 40000, cycles: 20 },
   tpl: null, tplKey: '',
   // Both views are kept, [0] without ring cancellation and [1] with, so the
@@ -344,7 +350,7 @@ function render() {
     for (let row = 0; row < ROWS; row++) {
       const val = cols[c * ROWS + row], o = (row * WINDOW_PINGS + x) * 4;
       if (!(val > 0)) { d[o] = 16; d[o + 1] = 20; d[o + 2] = 24; d[o + 3] = 255; continue; }
-      const db = Math.max(-DYNAMIC_RANGE_DB, Math.min(0, 20 * Math.log10(val / ref)));
+      const db = Math.max(-DYNAMIC_RANGE_DB, Math.min(0, 20 * Math.log10(val / ref) + state.gainDb));
       const li = Math.round((db + DYNAMIC_RANGE_DB) / DYNAMIC_RANGE_DB * 255) * 3;
       d[o] = LUT[li]; d[o + 1] = LUT[li + 1]; d[o + 2] = LUT[li + 2]; d[o + 3] = 255;
     }
@@ -425,6 +431,20 @@ document.getElementById('ring').onclick = (ev) => {
   ev.target.setAttribute('aria-pressed', String(state.ringCancel));
   render();
 };
+const gainEl = document.getElementById('gain');
+function setGain(db, save) {
+  state.gainDb = db;
+  gainEl.value = db;
+  document.getElementById('gaintext').textContent = (db > 0 ? '+' : '') + db + ' dB';
+  if (save) { try { localStorage.setItem('gainDb', String(db)); } catch (e) { /* private mode: not remembered */ } }
+  render();
+}
+gainEl.oninput = () => setGain(Number(gainEl.value), true);
+document.getElementById('gaintext').onclick = () => setGain(0, true);
+try {
+  const saved = Number(localStorage.getItem('gainDb'));
+  if (Number.isInteger(saved) && saved >= -30 && saved <= 30 && saved !== 0) setGain(saved, false);
+} catch (e) { /* no storage: start at 0 */ }
 window.addEventListener('resize', draw);
 draw();
 connect();
