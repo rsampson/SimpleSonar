@@ -11,6 +11,15 @@ An ESP32-based sonar front end and PC-side tooling for capturing and visualizing
 - **bench/** — characterization of the electronics alone (see below).
 - **hardware/** — KiCad designs: `sonar_preamp/` (older TL081 preamp, kept deliberately) and `sonar_amp.*` (separate board, untracked). Edit KiCad files only through the Konnect MCP tools.
 
+### Future goal: operation in water
+
+The eventual aim is an underwater sonar. Plans and constraints so far (2026-10-29):
+
+- **Hardware check: a ~50-gallon rain barrel**, only to confirm that a chosen water transducer and the electronics get a return (bottom or surface echo at a known depth). For real ranges, use a tank with a target on fishing line, time-gated before the wall echoes, then a pool or pond. Degas the water (let it stand a day) and wet the transducer face, or bubbles dominate.
+- **Rejected: a water-filled 1-inch plastic pipe** as a test range. The compliant wall slows sound to ~250–570 m/s at low frequency (polyethylene / PVC, water-hammer formula), above ~33 kHz the bore is multimode and smears the echo, and the cap and transducer face trap echoes between them.
+- **Needed in firmware and tools:** water's speed of sound (~1480 m/s, about 4.3× air) in the range calculation. The 1.5 ms delay before sampling is 1.1 m in water, so it must come way down. The 200 kHz ADC can't sample a 200 kHz fishfinder transducer; stay near 40–50 kHz or change the sampling.
+- Water loading damps the transducer to a few cycles of ringing, so the near-range dead zone should be much smaller than in air.
+
 ## Commands
 
 ### Firmware (from `firmware/`)
