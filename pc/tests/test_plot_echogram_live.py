@@ -193,3 +193,22 @@ def test_ring_cancel_clears_the_near_range_and_keeps_far_and_new_targets():
     assert peak_db(on, r, 50, 60) > peak_db(on_without_mover, r, 50, 60) + 20
     # With cancellation the display starts at 30 cm instead of 40.
     assert np.isnan(off[r < 40]).all() and not np.isnan(on[(r >= 31) & (r < 40)]).any()
+
+
+def test_first_ping_is_not_shown_uncancelled_below_40_cm():
+    packets, r = synthetic_pings(3)
+    state = new_live_state(ring_cancel=True)
+    process_new_packets(packets, state)
+    assert np.isnan(state['columns'][0][r < 40]).all()                  # no estimate yet
+    assert not np.isnan(state['columns'][1][(r >= 31) & (r < 40)]).any()  # cancelled from the second
+
+
+def test_a_pause_restarts_the_ring_estimate():
+    packets, _ = synthetic_pings(6)
+    packets[4][0]['T_ping_us'] += 10_000_000   # 10 s gap before ping 4
+    packets[5][0]['T_ping_us'] += 10_000_000
+    state = new_live_state(ring_cancel=True)
+    process_new_packets(packets[:4], state)
+    assert state['ring_count'] == 4
+    process_new_packets(packets[4:], state)
+    assert state['ring_count'] == 2

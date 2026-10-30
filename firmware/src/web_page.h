@@ -211,6 +211,7 @@ const RING_CANCEL_PINGS = 16;           // plot_echogram_live.py, as are these
 const RING_CANCEL_MAX_CM = 90;
 const RING_CANCEL_TAPER_CM = 20;
 const MIN_DISPLAY_RANGE_RING_CANCEL_CM = 30;
+const RING_RESET_GAP_US = 2000000;      // a longer gap between pings restarts the estimate
 
 const VIRIDIS = [[68, 1, 84], [71, 44, 122], [59, 81, 139], [44, 113, 142], [33, 144, 141],
                  [39, 173, 129], [92, 200, 99], [170, 220, 50], [253, 231, 37]];
@@ -227,7 +228,7 @@ const state = {
   ref: 0, rangeCm: null, shown: null, lastId: null, received: 0, missed: 0, times: [],
   // The estimate is kept up to date while cancellation is off, so turning it
   // on works at once.
-  ringCancel: true, ringEst: null, ringCount: 0,
+  ringCancel: true, ringEst: null, ringCount: 0, ringW: null, ringWKey: '', lastTPingUs: null,
 };
 
 const canvas = document.getElementById('echo');
@@ -249,20 +250,30 @@ async function loadConfig() {
   } catch (e) { /* keep the defaults */ }
 }
 
+function resetRing() { state.ringEst = null; state.ringCount = 0; }
+
 function addPing(pkt) {
   const key = pkt.dtUs + '/' + state.config.freq_hz + '/' + state.config.cycles;
   if (key !== state.tplKey) {
     state.tpl = makeTemplate(pkt.dtUs, state.config.freq_hz, state.config.cycles);
     state.tplKey = key;
+    resetRing();
   }
+  if (state.lastTPingUs !== null && pkt.tPingUs - state.lastTPingUs > RING_RESET_GAP_US) resetRing();
+  state.lastTPingUs = pkt.tPingUs;
   state.rangeCm = rangeAxisCm(pkt);
-  if (state.ringEst !== null && state.ringEst.length !== pkt.n) { state.ringEst = null; state.ringCount = 0; }
-  let values = pkt.values;
+  if (state.ringEst !== null && state.ringEst.length !== pkt.n) resetRing();
+  const wKey = state.tplKey + '/' + pkt.n;
+  if (wKey !== state.ringWKey) {
+    state.ringW = ringCancelWeights(state.rangeCm, RING_CANCEL_MAX_CM, RING_CANCEL_TAPER_CM);
+    state.ringWKey = wKey;
+  }
+  let values = pkt.values, minCm = MIN_DISPLAY_RANGE_CM;
   if (state.ringCancel && state.ringEst !== null) {
-    values = cancelRing(pkt.values, state.ringEst, ringCancelWeights(state.rangeCm, RING_CANCEL_MAX_CM, RING_CANCEL_TAPER_CM));
+    values = cancelRing(pkt.values, state.ringEst, state.ringW);
+    minCm = MIN_DISPLAY_RANGE_RING_CANCEL_CM;   // with no estimate yet, keep the 40 cm blanking
   }
   state.ringEst = updateRingEstimate(state.ringEst, pkt.values, state.ringCount++, RING_CANCEL_PINGS);
-  const minCm = state.ringCancel ? MIN_DISPLAY_RANGE_RING_CANCEL_CM : MIN_DISPLAY_RANGE_CM;
   const env = processPing(pkt, state.tpl, values, minCm);
   state.shown = displayedSamples(pkt, state.tpl, minCm);
   let peak = 0;
@@ -355,7 +366,7 @@ function connect() {
   setStatus('wait', 'connecting...');
   ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
   ws.binaryType = 'arraybuffer';
-  ws.onopen = async () => { await loadConfig(); setStatus('wait', 'connected, waiting for pings...'); };
+  ws.onopen = async () => { resetRing(); await loadConfig(); setStatus('wait', 'connected, waiting for pings...'); };
   ws.onmessage = (ev) => {
     if (typeof ev.data === 'string') return;
     const pkt = parsePacket(ev.data);

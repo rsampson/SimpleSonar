@@ -49,6 +49,7 @@ RING_CANCEL_PINGS = 16
 RING_CANCEL_MAX_CM = 90
 RING_CANCEL_TAPER_CM = 20
 MIN_DISPLAY_RANGE_RING_CANCEL_CM = 30
+RING_RESET_GAP_US = 2_000_000   # a longer gap between pings restarts the estimate
 
 
 def new_live_state(ring_cancel=True):
@@ -78,6 +79,8 @@ def reset_echogram_state(state):
         'ring_weights': None,
         'ring_estimate': None,
         'ring_count': 0,
+        'blank_samples_uncancelled': None,
+        'last_t_ping_us': None,
     })
 
 
@@ -181,18 +184,33 @@ def process_new_packets(new_packets, live_state):
             live_state['ring_weights'] = ring_cancel_weights(live_state['range_cm'])
             live_state['blank_cm'] = blank_cm
             live_state['blank_samples'] = int(np.count_nonzero(live_state['range_cm'] < blank_cm))
+            plain_cm = max(len(template) * sample_dt_us * US_TO_CM, MIN_DISPLAY_RANGE_CM)
+            live_state['blank_samples_uncancelled'] = int(np.count_nonzero(live_state['range_cm'] < plain_cm))
 
+        # A pause (receive.py restarted, STOP/START) lets the ring drift, so
+        # start the estimate afresh.
+        last_t = live_state['last_t_ping_us']
+        if last_t is not None and meta['T_ping_us'] - last_t > RING_RESET_GAP_US:
+            live_state['ring_estimate'] = None
+            live_state['ring_count'] = 0
+        live_state['last_t_ping_us'] = meta['T_ping_us']
+
+        raw = values
+        blank_samples = live_state['blank_samples']
         if live_state['ring_cancel']:
-            raw = values
             if live_state['ring_estimate'] is not None:
                 values = cancel_ring(raw, live_state['ring_estimate'], live_state['ring_weights'])
-            live_state['ring_estimate'] = update_ring_estimate(
-                live_state['ring_estimate'], raw, live_state['ring_count'])
-            live_state['ring_count'] += 1
+            else:
+                # Nothing to cancel with yet: don't show the uncancelled ring below 40 cm.
+                blank_samples = live_state['blank_samples_uncancelled']
+        # The estimate is updated with cancellation off too, like the web page's.
+        live_state['ring_estimate'] = update_ring_estimate(
+            live_state['ring_estimate'], raw, live_state['ring_count'])
+        live_state['ring_count'] += 1
 
         mf = matched_filter(values, live_state['template'])
         env = hilbert_envelope(mf)
-        env[:live_state['blank_samples']] = np.nan
+        env[:blank_samples] = np.nan
         env[len(env) - len(live_state['template']) + 1:] = np.nan  # the matched filter ran out of samples
 
         live_state['columns'].append(env)
